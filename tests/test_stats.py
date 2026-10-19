@@ -4,6 +4,7 @@ from shipit.stats import (
     build_stats,
     card_type,
     clean_title,
+    find_crew,
     format_duration,
     rarity,
     ship_score,
@@ -39,14 +40,44 @@ def test_year_fallback_uses_aware_utc_clock(pr_data, monkeypatch):
 
 
 def test_crew_detects_agents_humans_and_bots(pr_data):
-    crew = {m.name: m.kind for m in build_stats(pr_data).crew}
+    crew = {m.name: m.kind for m in build_stats(pr_data, show_bots=True).crew}
     assert crew == {
         "octocat": "human",
         "Claude": "agent",
         "Ada Lovelace": "human",
         "dependabot": "bot",
     }
-    assert build_stats(pr_data).has_agents
+    assert build_stats(pr_data, show_bots=True).has_agents
+    assert {m.name: m.kind for m in find_crew(pr_data, show_bots=True)} == crew
+
+
+def test_crew_excludes_bots_by_default(pr_data):
+    stats = build_stats(pr_data)
+    crew = {m.name: m.kind for m in stats.crew}
+    assert crew == {"octocat": "human", "Claude": "agent", "Ada Lovelace": "human"}
+    assert {m.name: m.kind for m in find_crew(pr_data)} == crew
+    assert stats.has_agents
+    assert stats.flavor == build_stats(pr_data, show_bots=True).flavor
+
+
+def test_generic_bots_hidden_and_coding_agents_kept(pr_data):
+    for login in ("github-actions[bot]", "codecov[bot]", "copilot[bot]", "claude[bot]"):
+        pr_data.commits.append({"author": {"login": login}, "commit": {"message": "x"}})
+    default = {m.name: m.kind for m in find_crew(pr_data)}
+    assert "github-actions" not in default and "codecov" not in default
+    assert "dependabot" not in default
+    assert default["Copilot"] == "agent"
+    assert default["Claude"] == "agent"
+    shown = {m.name: m.kind for m in find_crew(pr_data, show_bots=True)}
+    assert shown["github-actions"] == "bot" and shown["codecov"] == "bot"
+
+
+def test_bot_pr_author_hidden_but_still_author(pr_data):
+    pr_data.pr["user"] = {"login": "dependabot[bot]"}
+    stats = build_stats(pr_data)
+    assert stats.author == "dependabot[bot]"
+    assert "dependabot" not in [m.name for m in stats.crew]
+    assert "dependabot" in [m.name for m in build_stats(pr_data, show_bots=True).crew]
 
 
 @pytest.mark.parametrize(
