@@ -6,7 +6,7 @@ import hashlib
 import math
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 
 from .github import PRData
 
@@ -151,7 +151,7 @@ def build_stats(data: PRData) -> CardStats:
         abilities=abilities(additions, deletions, changed_files, minutes),
         crew=crew,
         flavor=flavor(data.ref.slug, any(m.kind == "agent" for m in crew)),
-        year=(merged_at or created_at or datetime.now()).year,
+        year=(merged_at or created_at or datetime.now(timezone.utc)).year,  # noqa: UP017
     )
 
 
