@@ -19,6 +19,25 @@ def test_build_stats(pr_data):
     assert [a.name for a in s.abilities] == ["Code Surge", "Blast Radius", "Quick Merge"]
 
 
+def test_year_fallback_uses_aware_utc_clock(pr_data, monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    instant = datetime(2025, 12, 31, 23, 30, tzinfo=UTC)
+
+    class FakeDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:
+                # naive local time on a server at UTC+1: already in 2026
+                return (instant + timedelta(hours=1)).replace(tzinfo=None)
+            return instant.astimezone(tz)
+
+    monkeypatch.setattr("shipit.stats.datetime", FakeDatetime)
+    pr_data.pr["merged_at"] = None
+    pr_data.pr["created_at"] = None
+    assert build_stats(pr_data).year == 2025
+
+
 def test_crew_detects_agents_humans_and_bots(pr_data):
     crew = {m.name: m.kind for m in build_stats(pr_data).crew}
     assert crew == {
