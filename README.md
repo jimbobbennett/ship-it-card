@@ -27,6 +27,11 @@ uv run python -m shipit --version   # print the installed version
 uv run uvicorn shipit.web:app --reload
 ```
 
+CI bots such as `github-actions[bot]`, `dependabot[bot]` and `codecov[bot]` are left out of
+the crew by default; coding agents (Claude, Copilot, ...) always stay. Pass `--show-bots` on
+the CLI, or `show_bots=true` on the web app (`/card?url=...&show_bots=true` and
+`/card.png?url=...&show_bots=true`), to include the bots.
+
 Without `GEMINI_API_KEY` you still get a card, with procedural artwork instead.
 Generated art is cached in `.cache/art/`, keyed by model and prompt.
 

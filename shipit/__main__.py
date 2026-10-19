@@ -1,4 +1,4 @@
-"""CLI: python -m shipit <pr-url> [-o card.png] [--no-gemini] [--version]"""
+"""CLI: python -m shipit <pr-url> [-o card.png] [--no-gemini] [--show-bots] [--version]"""
 
 from __future__ import annotations
 
@@ -23,11 +23,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("url", help="GitHub pull request URL")
     parser.add_argument("-o", "--out", type=Path, help="output PNG (default: <repo>-<n>.png)")
     parser.add_argument("--no-gemini", action="store_true", help="use procedural art")
+    parser.add_argument("--show-bots", action="store_true", help="include CI bots in the crew")
     parser.add_argument("--version", action="version", version=f"shipit {_version()}")
     args = parser.parse_args(argv)
 
     try:
-        card = make_card(args.url, use_gemini=not args.no_gemini)
+        card = make_card(args.url, use_gemini=not args.no_gemini, show_bots=args.show_bots)
     except BadPRUrl as exc:
         parser.error(str(exc))
 

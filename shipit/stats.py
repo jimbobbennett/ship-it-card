@@ -108,7 +108,7 @@ class CardStats:
         return any(member.kind == "agent" for member in self.crew)
 
 
-def build_stats(data: PRData) -> CardStats:
+def build_stats(data: PRData, show_bots: bool = False) -> CardStats:
     pr, repo = data.pr, data.repo
     additions = int(pr.get("additions") or 0)
     deletions = int(pr.get("deletions") or 0)
@@ -125,7 +125,7 @@ def build_stats(data: PRData) -> CardStats:
         for r in data.reviews
         if r.get("user") and r["user"].get("login") != (pr.get("user") or {}).get("login")
     }
-    crew = find_crew(data)
+    crew = find_crew(data, show_bots=show_bots)
     score = ship_score(additions + deletions, len(reviewers), commits, minutes)
 
     return CardStats(
@@ -155,8 +155,11 @@ def build_stats(data: PRData) -> CardStats:
     )
 
 
-def find_crew(data: PRData) -> list[CrewMember]:
-    """Everyone who touched the PR: commit authors plus co-author trailers."""
+def find_crew(data: PRData, show_bots: bool = False) -> list[CrewMember]:
+    """Everyone who touched the PR: commit authors plus co-author trailers.
+
+    Generic bots (kind "bot") are left out unless show_bots is set; coding agents stay.
+    """
     crew: dict[str, CrewMember] = {}
 
     def add(name: str, kind: str) -> None:
@@ -180,7 +183,7 @@ def find_crew(data: PRData) -> list[CrewMember]:
                 add(agent, "agent")
             else:
                 add(name, "human")
-    return list(crew.values())
+    return [m for m in crew.values() if show_bots or m.kind != "bot"]
 
 
 def _classify_login(login: str) -> tuple[str, str]:
