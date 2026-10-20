@@ -34,6 +34,20 @@ the CLI, or `show_bots=true` on the web app (`/card?url=...&show_bots=true` and
 `/card.png?url=...&show_bots=true`), to include the bots; they get their own distinct chip colour and a small `BOT` tag, so humans,
 AI agents and bots are easy to tell apart.
 
+### GitHub Enterprise Server
+
+Pass `--host ghe.example.com` on the CLI, or `host=ghe.example.com` on the web app
+(`/card?url=...&host=...` and `/card.png?url=...&host=...`), to fetch a PR from
+`https://<host>/api/v3`. The PR URL must be on that same host, and the host must be a bare
+hostname with an optional port. `GITHUB_TOKEN` is never sent to a custom host; set
+`GHE_TOKEN` to authenticate to it (otherwise requests are unauthenticated).
+
+The web app only accepts hosts listed in the `SHIPIT_ALLOWED_HOSTS` env var
+(comma-separated, e.g. `ghe.example.com,ghe2.example.com:8443`). If it is unset, every
+`host=` is rejected with a 400. This prevents SSRF and `GHE_TOKEN` leakage to arbitrary
+hosts. The CLI is unaffected.
+Ports must be 1 to 65535.
+
 The web app's home page shows the 20 most recent cards (in-memory, reset on restart).
 
 Without `GEMINI_API_KEY` you still get a card, with procedural artwork instead.

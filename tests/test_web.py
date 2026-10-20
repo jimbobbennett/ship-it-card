@@ -13,6 +13,49 @@ def test_index():
     assert "ship-it-card" in TestClient(web.app).get("/").text
 
 
+def _host_card(pr_data):
+    stats = build_stats(pr_data)
+    return Card(stats, card_png(stats, procedural_art(stats.slug, stats.rarity)), "procedural")
+
+
+def test_host_rejected_unless_allowlisted(monkeypatch, pr_data):
+    calls = []
+
+    def fake(url, show_bots=False, host=None):
+        calls.append(host)
+        return _host_card(pr_data)
+
+    monkeypatch.setattr(web, "make_card", fake)
+    monkeypatch.delenv("SHIPIT_ALLOWED_HOSTS", raising=False)
+    web._cache.clear()
+    client = TestClient(web.app)
+    url = "https://localhost/o/r/pull/1"
+    for host in ("localhost", "127.0.0.1", "evil.example.com"):
+        response = client.get("/card.png", params={"url": url, "host": host})
+        assert response.status_code == 400
+    assert "not allowed" in client.get("/card", params={"url": url, "host": "localhost"}).text
+    assert calls == []
+
+
+def test_allowlisted_host_and_cache_key(monkeypatch, pr_data):
+    calls = []
+
+    def fake(url, show_bots=False, host=None):
+        calls.append(host)
+        return _host_card(pr_data)
+
+    monkeypatch.setattr(web, "make_card", fake)
+    monkeypatch.setenv("SHIPIT_ALLOWED_HOSTS", "Ghe.Example.com, other.example.com")
+    web._cache.clear()
+    client = TestClient(web.app)
+    url = "https://ghe.example.com/o/r/pull/1"
+    for host in ("ghe.example.com", "GHE.example.com", "other.example.com"):
+        assert client.get("/card.png", params={"url": url, "host": host}).status_code == 200
+    assert calls == ["ghe.example.com", "other.example.com"]
+    page = client.get("/card", params={"url": url, "host": "ghe.example.com"}).text
+    assert "host=ghe.example.com" in page
+
+
 def test_card_png(monkeypatch, pr_data):
     stats = build_stats(pr_data)
     card = Card(stats, card_png(stats, procedural_art(stats.slug, stats.rarity)), "procedural")

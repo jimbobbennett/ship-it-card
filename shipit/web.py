@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import os
 from collections import deque
 from urllib.parse import quote
 from xml.sax.saxutils import escape as xml_escape
@@ -13,13 +14,14 @@ from fastapi.responses import HTMLResponse, Response
 
 from .card import RARITY_COLOURS
 from .core import Card, make_card
-from .github import BadPRUrl
+from .github import BadPRUrl, validate_host
 
 app = FastAPI(title="ship-it-card")
-_cache: dict[tuple[str, bool], Card] = {}
+_cache: dict[tuple[str, bool, str | None], Card] = {}
 RECENT_LIMIT = 20
-# Newest last; one entry per (url, show_bots). Metadata only, shared by all visitors.
+# Newest last; one entry per (url, show_bots, host). Metadata only, shared by all visitors.
 _recent: deque[dict] = deque(maxlen=RECENT_LIMIT)
+
 
 PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -74,6 +76,8 @@ def _gallery() -> str:
     for entry in reversed(_recent):
         q = quote(entry["url"], safe="")
         extra = "&show_bots=true" if entry["show_bots"] else ""
+        if entry.get("host") is not None:
+            extra += f"&host={quote(entry['host'], safe='')}"
         title = html.escape(entry["title"], quote=True)
         repo = html.escape(entry["repo"], quote=True)
         tiles.append(
@@ -85,14 +89,20 @@ def _gallery() -> str:
 
 
 @app.get("/card", response_class=HTMLResponse)
-def card_page(url: str = Query(..., max_length=300), show_bots: bool = False) -> str:
+def card_page(
+    url: str = Query(..., max_length=300),
+    show_bots: bool = False,
+    host: str | None = Query(None, max_length=300),
+) -> str:
     safe = html.escape(url, quote=True)
     try:
-        card = _get_card(url, show_bots)
+        card = _get_card(url, show_bots, host)
     except HTTPException as exc:
         return PAGE.format(value=safe, body=f'<div class="err">{html.escape(exc.detail)}</div>')
     alt = html.escape(f"Ship-it card for {card.stats.slug}", quote=True)
     extra = "&show_bots=true" if show_bots else ""
+    if host is not None:
+        extra += f"&host={quote(host, safe='')}"
     img = f'<img src="/card.png?url={quote(url, safe="")}{extra}" alt="{alt}">'
     return PAGE.format(value=safe, body=img + _breakdown_html(card))
 
@@ -114,8 +124,12 @@ def _breakdown_html(card: Card) -> str:
 
 
 @app.get("/card.png")
-def card_image(url: str = Query(..., max_length=300), show_bots: bool = False) -> Response:
-    card = _get_card(url, show_bots)
+def card_image(
+    url: str = Query(..., max_length=300),
+    show_bots: bool = False,
+    host: str | None = Query(None, max_length=300),
+) -> Response:
+    card = _get_card(url, show_bots, host)
     return Response(card.png, media_type="image/png")
 
 
@@ -166,12 +180,32 @@ def badge(url: str = Query(..., max_length=300)) -> Response:
     )
 
 
-def _get_card(url: str, show_bots: bool = False) -> Card:
-    key = (url, show_bots)
+def _allowed_hosts() -> set[str]:
+    """Hosts permitted via ?host=, from SHIPIT_ALLOWED_HOSTS (comma-separated).
+
+    Deny by default: with the variable unset, no custom host is accepted, so the web app
+    can't be used for SSRF or to leak GHE_TOKEN to an arbitrary host.
+    """
+    raw = os.environ.get("SHIPIT_ALLOWED_HOSTS", "")
+    return {h.strip().lower() for h in raw.split(",") if h.strip()}
+
+
+def _get_card(url: str, show_bots: bool = False, host: str | None = None) -> Card:
+    if host is not None:
+        try:
+            host = validate_host(host)
+        except BadPRUrl as exc:
+            raise HTTPException(400, "That doesn't look like a valid GitHub host.") from exc
+        if host not in _allowed_hosts():
+            raise HTTPException(400, "That GitHub host is not allowed on this server.")
+    key = (url, show_bots, host)
     if key in _cache:
         return _cache[key]
     try:
-        card = make_card(url, show_bots=show_bots)
+        if host is None:
+            card = make_card(url, show_bots=show_bots)
+        else:
+            card = make_card(url, show_bots=show_bots, host=host)
     except BadPRUrl as exc:
         raise HTTPException(400, "That doesn't look like a GitHub pull request URL.") from exc
     except httpx.HTTPStatusError as exc:
@@ -179,18 +213,19 @@ def _get_card(url: str, show_bots: bool = False) -> Card:
         message = "PR not found." if status == 404 else f"GitHub returned {status}."
         raise HTTPException(502, message) from exc
     _cache[key] = card
-    _record(url, show_bots, card)
+    _record(url, show_bots, card, host)
     return card
 
 
-def _record(url: str, show_bots: bool, card: Card) -> None:
+def _record(url: str, show_bots: bool, card: Card, host: str | None = None) -> None:
     for entry in list(_recent):
-        if (entry["url"], entry["show_bots"]) == (url, show_bots):
+        if (entry["url"], entry["show_bots"], entry.get("host")) == (url, show_bots, host):
             _recent.remove(entry)
     _recent.append(
         {
             "url": url,
             "show_bots": show_bots,
+            "host": host,
             "title": card.stats.title,
             "repo": card.stats.slug.split("#", 1)[0],
         }

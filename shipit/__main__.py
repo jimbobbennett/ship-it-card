@@ -1,4 +1,5 @@
-"""CLI: python -m shipit <pr-url> [-o card.png] [--no-gemini] [--show-bots] [--json] [--version]"""
+"""CLI: python -m shipit <pr-url> [-o card.png] [--no-gemini] [--show-bots] [--host HOST] [--json]
+[--version]"""
 
 from __future__ import annotations
 
@@ -10,7 +11,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from .core import make_card, make_stats
-from .github import BadPRUrl
+from .github import BadPRUrl, validate_host
 
 
 def _version() -> str:
@@ -26,15 +27,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("-o", "--out", type=Path, help="output PNG (default: <repo>-<n>.png)")
     parser.add_argument("--no-gemini", action="store_true", help="use procedural art")
     parser.add_argument("--show-bots", action="store_true", help="include CI bots in the crew")
+    parser.add_argument("--host", help="GitHub Enterprise hostname, e.g. ghe.example.com")
     parser.add_argument(
         "--json", action="store_true", help="print card stats as JSON instead of rendering a PNG"
     )
     parser.add_argument("--version", action="version", version=f"shipit {_version()}")
     args = parser.parse_args(argv)
 
+    kwargs = {}
     if args.json:
         try:
-            stats = make_stats(args.url, show_bots=args.show_bots)
+            if args.host is not None:
+                kwargs["host"] = validate_host(args.host)
+            stats = make_stats(args.url, show_bots=args.show_bots, **kwargs)
         except BadPRUrl as exc:
             parser.error(str(exc))
         data = asdict(stats)
@@ -43,7 +48,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     try:
-        card = make_card(args.url, use_gemini=not args.no_gemini, show_bots=args.show_bots)
+        if args.host is not None:
+            kwargs["host"] = validate_host(args.host)
+        card = make_card(
+            args.url, use_gemini=not args.no_gemini, show_bots=args.show_bots, **kwargs
+        )
     except BadPRUrl as exc:
         parser.error(str(exc))
 

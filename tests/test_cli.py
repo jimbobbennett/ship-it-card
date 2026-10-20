@@ -109,8 +109,8 @@ def json_env(monkeypatch, tmp_path):
     monkeypatch.setattr(core, "get_art", boom)
     monkeypatch.setattr(core, "card_png", boom)
     monkeypatch.setattr(cli, "make_card", boom)
-    monkeypatch.setattr(core, "parse_pr_url", lambda url: url)
-    monkeypatch.setattr(core, "fetch_pr", lambda ref: ref)
+    monkeypatch.setattr(core, "parse_pr_url", lambda url, host=None: url)
+    monkeypatch.setattr(core, "fetch_pr", lambda ref, host=None: ref)
     seen = {}
 
     def fake_build(pr, show_bots=False):
