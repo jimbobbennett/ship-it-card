@@ -64,7 +64,33 @@ TEAM_FLAVOR = [
     "Humans and agents, shipping side by side.",
     "Pair programming, upgraded.",
     "One prompt, many hands, zero merge conflicts.",
+    "The agents did the typing. The humans did the judgement.",
+    "Silicon and carbon, co-authoring the changelog.",
 ]
+
+TINY_FLAVOR = [
+    "Small diff. Big energy.",
+    "A few lines, zero fuss.",
+    "Tiny change, clean ship.",
+    "Proof that small PRs merge fastest.",
+]
+
+HUGE_FLAVOR = [
+    "A mountain of changes, and it still shipped.",
+    "Thousands of lines. One brave reviewer.",
+    "This one needed a bigger diff viewer.",
+    "Huge in scope, landed anyway.",
+]
+
+DOCS_FLAVOR = [
+    "Words matter. Shipped them.",
+    "The docs are now slightly less lying.",
+    "Future readers say thank you.",
+    "Documentation: the feature behind every feature.",
+]
+
+TINY_MAX_LINES = 10  # total lines changed at or below this is "tiny"
+HUGE_MIN_LINES = 1000  # total lines changed at or above this is "huge"
 
 
 @dataclass
@@ -126,6 +152,7 @@ def build_stats(data: PRData, show_bots: bool = False) -> CardStats:
         if r.get("user") and r["user"].get("login") != (pr.get("user") or {}).get("login")
     }
     crew = find_crew(data, show_bots=show_bots)
+    type_ = card_type(pr.get("title") or "", [lbl.get("name", "") for lbl in pr.get("labels", [])])
     score = ship_score(additions + deletions, len(reviewers), commits, minutes)
 
     return CardStats(
@@ -136,9 +163,7 @@ def build_stats(data: PRData, show_bots: bool = False) -> CardStats:
         author=(pr.get("user") or {}).get("login", "unknown"),
         language=repo.get("language") or "Code",
         description=repo.get("description") or "",
-        card_type=card_type(
-            pr.get("title") or "", [lbl.get("name", "") for lbl in pr.get("labels", [])]
-        ),
+        card_type=type_,
         merged=merged_at is not None,
         additions=additions,
         deletions=deletions,
@@ -150,7 +175,9 @@ def build_stats(data: PRData, show_bots: bool = False) -> CardStats:
         rarity=rarity(score),
         abilities=abilities(additions, deletions, changed_files, minutes),
         crew=crew,
-        flavor=flavor(data.ref.slug, any(m.kind == "agent" for m in crew)),
+        flavor=flavor(
+            data.ref.slug, additions + deletions, type_, any(m.kind == "agent" for m in crew)
+        ),
         year=(merged_at or created_at or datetime.now(timezone.utc)).year,  # noqa: UP017
     )
 
@@ -256,8 +283,22 @@ def format_duration(minutes: int) -> str:
     return f"{hours // 24} days"
 
 
-def flavor(slug: str, has_agents: bool) -> str:
-    pool = TEAM_FLAVOR if has_agents else FLAVOR
+def flavor(slug: str, lines_changed: int, card_type: str, has_agents: bool) -> str:
+    """Pick a deterministic flavour line that fits the PR.
+
+    Pool precedence: docs-only (card_type == "Docs"), then agent-assisted, then
+    tiny (<= TINY_MAX_LINES), then huge (>= HUGE_MIN_LINES), then the general pool.
+    """
+    if card_type == "Docs":
+        pool = DOCS_FLAVOR
+    elif has_agents:
+        pool = TEAM_FLAVOR
+    elif lines_changed <= TINY_MAX_LINES:
+        pool = TINY_FLAVOR
+    elif lines_changed >= HUGE_MIN_LINES:
+        pool = HUGE_FLAVOR
+    else:
+        pool = FLAVOR
     index = int(hashlib.sha256(slug.encode()).hexdigest(), 16) % len(pool)
     return pool[index]
 
