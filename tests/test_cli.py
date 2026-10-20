@@ -1,4 +1,5 @@
 import importlib.metadata
+import json
 import tomllib
 from pathlib import Path
 
@@ -75,3 +76,88 @@ def test_url_still_required():
     with pytest.raises(SystemExit) as exc:
         main([])
     assert exc.value.code == 2
+
+
+URL = "https://github.com/o/r/pull/1"
+JSON_KEYS = [
+    "slug", "title", "repo", "number", "author", "language", "description", "card_type",
+    "merged", "additions", "deletions", "changed_files", "commits", "reviewers",
+    "minutes_to_merge", "ship_score", "rarity", "abilities", "crew", "flavor", "year",
+]  # fmt: skip
+
+
+def _fake_stats(show_bots=False):
+    from shipit.stats import Ability, CardStats, CrewMember
+
+    crew = [CrewMember("alice", "human")]
+    if show_bots:
+        crew.append(CrewMember("ci[bot]", "bot"))
+    return CardStats(
+        "o/r#1", "t", "o/r", 1, "alice", "Python", "", "Feature", True, 1, 1, 1, 1, 0,
+        None, 10, "Common", [Ability("Speed", "fast")], crew, "nice", 2024,
+    )  # fmt: skip
+
+
+@pytest.fixture
+def json_env(monkeypatch, tmp_path):
+    from shipit import __main__ as cli
+    from shipit import core
+
+    def boom(*a, **k):
+        raise AssertionError("must not be called")
+
+    monkeypatch.setattr(core, "get_art", boom)
+    monkeypatch.setattr(core, "card_png", boom)
+    monkeypatch.setattr(cli, "make_card", boom)
+    monkeypatch.setattr(core, "parse_pr_url", lambda url, host=None: url)
+    monkeypatch.setattr(core, "fetch_pr", lambda ref, host=None: ref)
+    seen = {}
+
+    def fake_build(pr, show_bots=False):
+        seen["show_bots"] = show_bots
+        return _fake_stats(show_bots)
+
+    monkeypatch.setattr(core, "build_stats", fake_build)
+    monkeypatch.chdir(tmp_path)
+    return seen, tmp_path
+
+
+def test_json_output(json_env, capsys):
+    _, tmp_path = json_env
+    assert main([URL, "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert list(data) == JSON_KEYS
+    assert data["slug"] == "o/r#1"
+    assert data["ship_score"] == 10
+    assert data["minutes_to_merge"] is None
+    assert data["abilities"] == [{"name": "Speed", "value": "fast"}]
+    assert data["crew"] == [{"name": "alice", "kind": "human"}]
+    assert not list(tmp_path.iterdir())
+
+
+def test_json_ignores_out(json_env):
+    _, tmp_path = json_env
+    assert main([URL, "--json", "-o", str(tmp_path / "x.png")]) == 0
+    assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize(("extra", "expected"), [([], False), (["--show-bots"], True)])
+def test_json_show_bots(json_env, capsys, extra, expected):
+    seen, _ = json_env
+    assert main([URL, "--json", *extra]) == 0
+    assert seen["show_bots"] is expected
+    names = [c["name"] for c in json.loads(capsys.readouterr().out)["crew"]]
+    assert ("ci[bot]" in names) is expected
+
+
+def test_json_bad_url(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["not-a-url", "--json"])
+    assert exc.value.code == 2
+    assert capsys.readouterr().out == ""
+
+
+def test_json_in_help(capsys):
+    with pytest.raises(SystemExit):
+        main(["--help"])
+    assert "--json" in capsys.readouterr().out

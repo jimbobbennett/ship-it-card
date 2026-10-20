@@ -21,6 +21,7 @@ cp .env.example .env       # add GEMINI_API_KEY (and optionally GITHUB_TOKEN)
 
 # CLI
 uv run python -m shipit https://github.com/simonw/llm/pull/1741 -o card.png
+uv run python -m shipit https://github.com/simonw/llm/pull/1741 --json   # stats as JSON, no art/PNG
 uv run python -m shipit --version   # print the installed version
 
 # Web app on http://localhost:8000
@@ -30,7 +31,8 @@ uv run uvicorn shipit.web:app --reload
 CI bots such as `github-actions[bot]`, `dependabot[bot]` and `codecov[bot]` are left out of
 the crew by default; coding agents (Claude, Copilot, ...) always stay. Pass `--show-bots` on
 the CLI, or `show_bots=true` on the web app (`/card?url=...&show_bots=true` and
-`/card.png?url=...&show_bots=true`), to include the bots.
+`/card.png?url=...&show_bots=true`), to include the bots; they get their own distinct chip colour and a small `BOT` tag, so humans,
+AI agents and bots are easy to tell apart.
 
 ### GitHub Enterprise Server
 
@@ -48,6 +50,19 @@ the web app rejects every custom host. Ports must be 1 to 65535.
 Without `GEMINI_API_KEY` you still get a card, with procedural artwork instead.
 Generated art is cached in `.cache/art/`, keyed by model and prompt.
 
+## README badge
+
+`GET /badge.svg?url=<pr-url>` returns a small shields.io-style SVG badge. Embed it in a README:
+
+```markdown
+![ship-it-card](https://example.com/badge.svg?url=https://github.com/owner/repo/pull/123)
+```
+
+The left part shows `<repo> · <PR title>` (the title is truncated with an ellipsis); the
+right part shows `<Rarity> <score>`, filled with the rarity colour: Common `#a8b2c1`,
+Uncommon `#54d6a0`, Rare `#58a0ff`, Epic `#be6eff`, Legendary `#ffc440`. The response is
+`image/svg+xml` with `Cache-Control: public, max-age=600`.
+
 ## How a card is scored
 
 | Field | Where it comes from |
@@ -55,7 +70,7 @@ Generated art is cached in `.cache/art/`, keyed by model and prompt.
 | Ship score (1 to 99) | lines changed (log scale), distinct reviewers, commits, and a bonus for merging within a day |
 | Rarity | Common < 40 ≤ Uncommon < 60 ≤ Rare < 75 ≤ Epic < 88 ≤ Legendary |
 | Type | conventional-commit prefix (`feat:`, `fix:`, `docs:` ...) or PR labels |
-| Crew | PR author, commit authors and `Co-Authored-By` trailers; Claude, Codex, Copilot, Cursor, Devin and friends get an **AI** badge |
+| Crew | PR author, commit authors and `Co-Authored-By` trailers; Claude, Codex, Copilot, Cursor, Devin, Windsurf, Kiro, OpenHands, Factory, Amazon Q and friends get an **AI** badge |
 | Art | Gemini (`gemini-2.5-flash-image` by default, `SHIPIT_IMAGE_MODEL` to change) from the card type, language and a sanitised title |
 
 ## Develop

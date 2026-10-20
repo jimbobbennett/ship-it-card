@@ -5,11 +5,13 @@ from __future__ import annotations
 import html
 import os
 from urllib.parse import quote
+from xml.sax.saxutils import escape as xml_escape
 
 import httpx
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, Response
 
+from .card import RARITY_COLOURS
 from .core import Card, make_card
 from .github import BadPRUrl, validate_host
 
@@ -84,6 +86,53 @@ def card_image(
 ) -> Response:
     card = _get_card(url, show_bots, host)
     return Response(card.png, media_type="image/png")
+
+
+BADGE_MAX_TITLE = 40
+BADGE_MAX_AGE = 600
+
+
+def _hex(rgb: tuple[int, int, int]) -> str:
+    return "#{:02x}{:02x}{:02x}".format(*rgb)
+
+
+def _text_width(text: str) -> int:
+    """Deterministic rough width (px) at ~11px Verdana."""
+    return round(sum(4 if c in "iljtfI.,:;'|! " else 8 if c in "mwMW" else 6.5 for c in text)) + 10
+
+
+def _badge_svg(repo: str, title: str, rarity: str, score: int) -> str:
+    if len(title) > BADGE_MAX_TITLE:
+        title = title[: BADGE_MAX_TITLE - 1].rstrip() + "…"
+    label = f"{repo} · {title}"
+    message = f"{rarity} {score}"
+    fill = _hex(RARITY_COLOURS.get(rarity, RARITY_COLOURS["Common"]))
+    lw, mw = _text_width(label), _text_width(message)
+    full = xml_escape(f"{label}: {message}", {'"': "&quot;"})
+    lab, msg = xml_escape(label), xml_escape(message)
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{lw + mw}" height="20" '
+        f'role="img" aria-label="{full}">'
+        f"<title>{xml_escape(f'{label}: {message}')}</title>"
+        f'<rect width="{lw}" height="20" fill="#555"/>'
+        f'<rect x="{lw}" width="{mw}" height="20" fill="{fill}"/>'
+        '<g font-family="Verdana,Geneva,DejaVu Sans,sans-serif" font-size="11" '
+        'text-anchor="middle">'
+        f'<text x="{lw / 2}" y="14" fill="#fff">{lab}</text>'
+        f'<text x="{lw + mw / 2}" y="14" fill="#111">{msg}</text>'
+        "</g></svg>"
+    )
+
+
+@app.get("/badge.svg")
+def badge(url: str = Query(..., max_length=300)) -> Response:
+    stats = _get_card(url).stats
+    svg = _badge_svg(stats.repo, stats.title, stats.rarity, stats.ship_score)
+    return Response(
+        svg,
+        media_type="image/svg+xml",
+        headers={"Cache-Control": f"public, max-age={BADGE_MAX_AGE}"},
+    )
 
 
 def _get_card(url: str, show_bots: bool = False, host: str | None = None) -> Card:
