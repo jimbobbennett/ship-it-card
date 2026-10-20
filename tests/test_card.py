@@ -156,3 +156,82 @@ def test_long_flavor_fits_and_differs(pr_data):
     long_png = card_png(dataclasses.replace(stats, flavor="W" * 80), art)
     assert Image.open(io.BytesIO(long_png)).size == (W, H)
     assert long_png != card_png(stats, art)
+
+
+# SHA-256 of render_card(...).tobytes() captured from the pre-Theme renderer, using
+# procedural_art("fixed", "Rare") and a crew of human + agent + bot.
+GOLDEN_RENDER = {
+    "Common": "2a729a03d5ea12ce9a7e97daf87caad0419993461e9ab880e332aaa56adcece7",
+    "Uncommon": "a6b657aa910af501648ae4b3f3fef2795a506bf59383b3c842b0c028dec51952",
+    "Rare": "f02203a93b817fe375a48ba18bdfccfd19bc456f0666d465a195d72a16f363e8",
+    "Epic": "4c0ffb88b56d3c0d63bf83300f1828734729aefd0f33d3a021c5e325cb9d93d3",
+    "Legendary": "ddca71d1a6c889a0b904341c45fde826f3302d1a02b4a404d4338acb9d9788a6",
+}
+GOLDEN_PNG_LEGENDARY = "21c111968ad9d69adcd8648441fd181ba0d7d6695d19c7e4dd5dba5d4f00eee4"
+GOLDEN_LONG_EPIC = "4f583d62e4dd25e6e23939649602b75f3f46b75e54db8a741d0dfd60edf83b92"
+
+
+def _parity_stats(pr_data):
+    stats = build_stats(pr_data, show_bots=True)
+    stats.crew = [
+        CrewMember("ada", "human"),
+        CrewMember("Claude", "agent"),
+        CrewMember("depbot", "bot"),
+    ]
+    return stats
+
+
+def test_render_matches_pre_theme_golden_hashes(pr_data):
+    import hashlib
+
+    from shipit.card import Theme, render_card
+
+    stats = _parity_stats(pr_data)
+    art = procedural_art("fixed", "Rare")
+    for rarity, digest in GOLDEN_RENDER.items():
+        stats.rarity = rarity
+        for theme in (None, Theme()):
+            image = render_card(stats, art, theme)
+            assert hashlib.sha256(image.tobytes()).hexdigest() == digest, rarity
+    assert hashlib.sha256(card_png(stats, art)).hexdigest() == GOLDEN_PNG_LEGENDARY
+    assert hashlib.sha256(card_png(stats, art, Theme())).hexdigest() == GOLDEN_PNG_LEGENDARY
+
+    stats.rarity = "Epic"
+    stats.title = "A really " * 40 + "long title"
+    stats.flavor = "W" * 80
+    assert hashlib.sha256(render_card(stats, art).tobytes()).hexdigest() == GOLDEN_LONG_EPIC
+
+
+def test_theme_defaults_match_legacy_values():
+    import dataclasses
+
+    import pytest
+
+    from shipit.card import PAD, Theme
+
+    theme = Theme()
+    assert (theme.w, theme.h) == (1080, 1512) == (W, H)
+    assert theme.pad == PAD == 36
+    assert theme.rarity_colours["Legendary"] == (255, 196, 64)
+    assert RARITY_COLOURS == dict(theme.rarity_colours)
+    assert theme.rarity_stars["Legendary"] == 5
+    assert dict(theme.tag_widths) == {"AI": 30, "BOT": 44}
+    assert (theme.art_y, theme.art_height, theme.type_bar_y) == (236, 702, 966)
+    assert (theme.abilities_y, theme.abilities_step, theme.crew_y) == (1044, 72, 1276)
+    assert theme.title_sizes == (52, 46, 40, 34)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        theme.pad = 1  # type: ignore[misc]
+
+
+def test_changed_theme_changes_render(pr_data):
+    import dataclasses
+
+    from shipit.card import Theme, render_card
+
+    stats = build_stats(pr_data)
+    art = procedural_art("fixed", "Rare")
+    base = render_card(stats, art).tobytes()
+    assert render_card(stats, art, Theme()).tobytes() == base
+    for change in ({"pad": 48}, {"panel": (200, 30, 30)}, {"art_y": 260}):
+        themed = dataclasses.replace(Theme(), **change)
+        assert render_card(stats, art, themed).tobytes() != base, change
