@@ -2,6 +2,7 @@ import dataclasses
 import html
 import re
 
+import pytest
 from fastapi.testclient import TestClient
 
 from shipit import web
@@ -294,6 +295,45 @@ def _flavor_env(monkeypatch, pr_data):
 
 
 FLAVOR_URL = "https://github.com/o/r/pull/1"
+
+
+def _style_env(monkeypatch, pr_data):
+    base = build_stats(pr_data)
+    calls = []
+
+    def fake(url, show_bots=False, style=None):
+        calls.append(style)
+        return Card(base, b"\x89PNG" + (style or "").encode(), "procedural")
+
+    monkeypatch.setattr(web, "make_card", fake)
+    _reset()
+    return TestClient(web.app), calls
+
+
+@pytest.mark.parametrize("style", ["pixel", "anime", "watercolour", "painterly"])
+def test_style_valid(monkeypatch, pr_data, style):
+    client, calls = _style_env(monkeypatch, pr_data)
+    assert client.get("/card.png", params={"url": FLAVOR_URL, "style": style}).status_code == 200
+    page = client.get("/card", params={"url": FLAVOR_URL, "style": style})
+    assert page.status_code == 200
+    assert calls == [style]
+    text = page.text
+    assert text.count(f"style={style}") >= 3  # img, og:image/twitter:image, og:url
+
+
+@pytest.mark.parametrize("style", ["Pixel", "neon", "", "pixel&x=1", "<script>"])
+def test_style_invalid(monkeypatch, pr_data, style):
+    client, calls = _style_env(monkeypatch, pr_data)
+    for path in ("/card", "/card.png"):
+        response = client.get(path, params={"url": FLAVOR_URL, "style": style})
+        assert 400 <= response.status_code < 500
+        assert "<script>" not in response.text
+    assert calls == []
+
+
+def test_no_style_links_have_no_style(monkeypatch, pr_data):
+    client, _ = _style_env(monkeypatch, pr_data)
+    assert "style=" not in client.get("/card", params={"url": FLAVOR_URL}).text
 
 
 def test_flavor_png_passed_to_make_card(monkeypatch, pr_data):

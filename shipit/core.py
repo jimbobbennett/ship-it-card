@@ -59,7 +59,9 @@ def make_card(
     host: str | None = None,
     flavor: str | None = None,
     token: str | None = None,
+    style: str | None = None,
 ) -> Card:
     stats = make_stats(url, show_bots=show_bots, host=host, flavor=flavor, token=token)
-    art, source = get_art(stats, use_gemini=use_gemini)
+    art_kwargs = {} if style is None else {"style": style}
+    art, source = get_art(stats, use_gemini=use_gemini, **art_kwargs)
     return Card(stats=stats, png=card_png(stats, art), art_source=source)

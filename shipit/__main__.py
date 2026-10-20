@@ -1,5 +1,6 @@
 """CLI: python -m shipit <pr-url> [-o card.png] [--no-gemini] [--show-bots] [--host HOST]
-[--flavor TEXT (max 80 chars)] [--token GITHUB_TOKEN] [--json] [--version]
+[--flavor TEXT (max 80 chars)] [--style pixel|anime|watercolour|painterly]
+[--token GITHUB_TOKEN] [--json] [--version]
 
 --token fetches PRs from private repos; it overrides GITHUB_TOKEN/GHE_TOKEN for this run, is
 never printed or written to the output file. Blank means unset."""
@@ -13,6 +14,7 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
+from .art import STYLES, StyledArtUnavailable
 from .core import FLAVOR_MAX, make_card, make_stats, normalize_flavor
 from .github import BadPRUrl, clean_token, validate_host
 
@@ -32,6 +34,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--show-bots", action="store_true", help="include CI bots in the crew")
     parser.add_argument("--host", help="GitHub Enterprise hostname, e.g. ghe.example.com")
     parser.add_argument("--flavor", help=f"custom flavour text (max {FLAVOR_MAX} characters)")
+    parser.add_argument(
+        "--style",
+        choices=list(STYLES),
+        help="art style for the Gemini image (default: the standard look)",
+    )
     parser.add_argument(
         "--token",
         help="GitHub token for private repos (overrides GITHUB_TOKEN/GHE_TOKEN for this run)",
@@ -71,11 +78,16 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.host is not None:
             kwargs["host"] = validate_host(args.host)
+        if args.style is not None:
+            kwargs["style"] = args.style
         card = make_card(
             args.url, use_gemini=not args.no_gemini, show_bots=args.show_bots, **kwargs
         )
     except BadPRUrl as exc:
         parser.error(str(exc))
+    except StyledArtUnavailable as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
     s = card.stats
     out = args.out or Path(f"{s.repo.split('/')[-1]}-{s.number}.png")

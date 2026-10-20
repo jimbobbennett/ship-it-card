@@ -40,8 +40,20 @@ LANGUAGE_MOTIFS = {
     "Ruby": "with sparkling red gemstones",
 }
 
+STYLES = {
+    "pixel": "Retro pixel art, crisp square pixels, limited palette, 16-bit video game style",
+    "anime": "Anime illustration, clean cel-shaded linework, expressive characters, vivid colours",
+    "watercolour": "Soft watercolour painting, translucent washes, visible paper texture",
+    "painterly": "Rich oil-painting style with bold visible brushstrokes, dramatic lighting",
+}
+DEFAULT_STYLE_PHRASE = "Painterly digital fantasy art, dramatic lighting, rich saturated colours,"
 
-def art_prompt(stats: CardStats) -> str:
+
+class StyledArtUnavailable(RuntimeError):
+    """A styled card was requested but styled art could not be produced."""
+
+
+def art_prompt(stats: CardStats, style: str | None = None) -> str:
     """Build the image prompt. Only short, sanitised strings from the PR reach the model."""
     scene = TYPE_SCENES.get(stats.card_type, TYPE_SCENES["Feature"])
     motif = LANGUAGE_MOTIFS.get(stats.language, "")
@@ -58,22 +70,29 @@ def art_prompt(stats: CardStats) -> str:
         if body
         else ""
     )
+    look = DEFAULT_STYLE_PHRASE if style is None else f"{STYLES[style]},"
     return (
         f"Full-bleed fantasy illustration: {scene} {motif}. "
         f'The scene is loosely inspired by a software change called "{theme}".{hint}{team} '
-        f"{stats.rarity} card energy. Vibrant, optimistic, celebratory mood. Painterly "
-        "digital fantasy art, dramatic lighting, rich saturated colours, centred subject, "
+        f"{stats.rarity} card energy. Vibrant, optimistic, celebratory mood. {look} "
+        "centred subject, "
         "4:3 landscape composition that fills the entire canvas edge to edge. No border, "
         "no frame, no card outline, no panels. Absolutely no text, letters, numbers, logos "
         "or watermarks anywhere in the image."
     )
 
 
-def get_art(stats: CardStats, use_gemini: bool = True) -> tuple[Image.Image, str]:
+def get_art(
+    stats: CardStats, use_gemini: bool = True, style: str | None = None
+) -> tuple[Image.Image, str]:
     """Return (artwork, source) where source is 'gemini', 'cache' or 'procedural'."""
     key = os.environ.get("GEMINI_API_KEY")
+    if style is not None and not (use_gemini and key):
+        raise StyledArtUnavailable(
+            f"Cannot make '{style}' art without Gemini (set GEMINI_API_KEY and avoid --no-gemini)."
+        )
     if use_gemini and key:
-        prompt = art_prompt(stats)
+        prompt = art_prompt(stats, style)
         model = os.environ.get("SHIPIT_IMAGE_MODEL", DEFAULT_MODEL)
         cache_file = CACHE_DIR / f"{hashlib.sha256((model + prompt).encode()).hexdigest()}.png"
         if cache_file.exists():
@@ -81,6 +100,8 @@ def get_art(stats: CardStats, use_gemini: bool = True) -> tuple[Image.Image, str
         try:
             image = generate_with_gemini(prompt, model, key)
         except Exception as exc:  # noqa: BLE001 - any API failure falls back to procedural art
+            if style is not None:
+                raise StyledArtUnavailable(f"Gemini failed to make '{style}' art: {exc}") from exc
             print(f"[ship-it-card] Gemini art failed, using procedural art: {exc}")
         else:
             CACHE_DIR.mkdir(parents=True, exist_ok=True)

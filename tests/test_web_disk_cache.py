@@ -58,6 +58,53 @@ def test_variants_get_separate_files(cache_dir, calls):
     assert len(calls) == 4
 
 
+@pytest.fixture
+def style_calls(monkeypatch, pr_data):
+    made = []
+
+    def fake(url, show_bots=False, host=None, style=None):
+        made.append(style)
+        stats = build_stats(pr_data)
+        return Card(stats, card_png(stats, procedural_art(stats.slug, stats.rarity)), "procedural")
+
+    monkeypatch.setattr(web, "make_card", fake)
+    return made
+
+
+@pytest.mark.parametrize("first", [None, "pixel"])
+def test_new_style_not_served_from_disk_cache(cache_dir, style_calls, first):
+    client = TestClient(web.app)
+    params = {"url": URL} if first is None else {"url": URL, "style": first}
+    client.get("/card.png", params=params)
+    web._cache.clear()  # force the disk cache to be the only thing remembered
+    client.get("/card.png", params={"url": URL, "style": "anime"})
+    assert style_calls == [first, "anime"]
+    assert len(list(cache_dir.glob("*.png"))) == 2
+    web._cache.clear()
+    client.get("/card.png", params=params)
+    client.get("/card.png", params={"url": URL, "style": "anime"})
+    assert len(style_calls) == 2
+
+
+def test_new_style_not_served_from_memory_cache(cache_dir, style_calls):
+    client = TestClient(web.app)
+    client.get("/card", params={"url": URL})
+    client.get("/card", params={"url": URL, "style": "anime"})
+    client.get("/card", params={"url": URL, "style": "anime"})
+    assert style_calls == [None, "anime"]
+
+
+def test_unstyled_disk_key_unchanged(cache_dir):
+    raw = repr((URL, False, None)).encode()
+    assert (
+        web._card_cache_path(URL, False, None)
+        == cache_dir / f"{hashlib.sha256(raw).hexdigest()}.png"
+    )
+    assert web._card_cache_path(URL, False, None, None, "pixel") != web._card_cache_path(
+        URL, False, None
+    )
+
+
 def test_malicious_url_stays_in_cache_dir(cache_dir, calls):
     client = TestClient(web.app)
     for bad in ("../../etc/passwd", "a/b/../../../x", "/abs/path"):
