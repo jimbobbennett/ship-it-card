@@ -35,11 +35,18 @@ class Card:
 
 
 def make_stats(
-    url: str, show_bots: bool = False, host: str | None = None, flavor: str | None = None
+    url: str,
+    show_bots: bool = False,
+    host: str | None = None,
+    flavor: str | None = None,
+    token: str | None = None,
 ) -> CardStats:
     """Stats only: no art generation and no rendering."""
     ref = parse_pr_url(url, host=host)
-    pr = fetch_pr(ref) if host is None else fetch_pr(ref, host=host)
+    kwargs: dict = {} if host is None else {"host": host}
+    if token:
+        kwargs["token"] = token
+    pr = fetch_pr(ref, **kwargs)
     stats = build_stats(pr, show_bots=show_bots)
     custom = normalize_flavor(flavor)
     return stats if custom is None else replace(stats, flavor=custom)
@@ -51,7 +58,8 @@ def make_card(
     show_bots: bool = False,
     host: str | None = None,
     flavor: str | None = None,
+    token: str | None = None,
 ) -> Card:
-    stats = make_stats(url, show_bots=show_bots, host=host, flavor=flavor)
+    stats = make_stats(url, show_bots=show_bots, host=host, flavor=flavor, token=token)
     art, source = get_art(stats, use_gemini=use_gemini)
     return Card(stats=stats, png=card_png(stats, art), art_source=source)

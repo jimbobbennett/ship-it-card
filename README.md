@@ -40,6 +40,16 @@ Pass `--flavor "Ship happens"` on the CLI (PNG and `--json` output), or `flavor=
 on the web app (`/card?url=...&flavor=...` and `/card.png?url=...&flavor=...`), to replace the
 generated flavour line. Maximum 80 characters; longer text is rejected.
 
+### Private repos (your own token)
+
+Pass `--token TOKEN` on the CLI (PNG and `--json`), or fill in the optional password field on the
+web form, to make a card for a PR in a private repo you can access. The token overrides
+`GITHUB_TOKEN`/`GHE_TOKEN` for that one request; blank means unset. It is never cached, logged,
+printed, or put in a URL: the web form submits by POST, the card is inlined as a `data:` image,
+and tokened cards are never cached, shown in the gallery, or given share/OG links. Tokens are
+not accepted as query parameters on `GET` endpoints. On the web app a token is only sent to
+github.com or a host in `SHIPIT_ALLOWED_HOSTS`. Prefer a fine-grained, read-only token.
+
 ### GitHub Enterprise Server
 
 Pass `--host ghe.example.com` on the CLI, or `host=ghe.example.com` on the web app

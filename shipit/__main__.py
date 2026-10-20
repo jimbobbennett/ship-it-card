@@ -1,5 +1,8 @@
 """CLI: python -m shipit <pr-url> [-o card.png] [--no-gemini] [--show-bots] [--host HOST]
-[--flavor TEXT (max 80 chars)] [--json] [--version]"""
+[--flavor TEXT (max 80 chars)] [--token GITHUB_TOKEN] [--json] [--version]
+
+--token fetches PRs from private repos; it overrides GITHUB_TOKEN/GHE_TOKEN for this run, is
+never printed or written to the output file. Blank means unset."""
 
 from __future__ import annotations
 
@@ -11,7 +14,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from .core import FLAVOR_MAX, make_card, make_stats, normalize_flavor
-from .github import BadPRUrl, validate_host
+from .github import BadPRUrl, clean_token, validate_host
 
 
 def _version() -> str:
@@ -30,6 +33,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--host", help="GitHub Enterprise hostname, e.g. ghe.example.com")
     parser.add_argument("--flavor", help=f"custom flavour text (max {FLAVOR_MAX} characters)")
     parser.add_argument(
+        "--token",
+        help="GitHub token for private repos (overrides GITHUB_TOKEN/GHE_TOKEN for this run)",
+    )
+    parser.add_argument(
         "--json", action="store_true", help="print card stats as JSON instead of rendering a PNG"
     )
     parser.add_argument("--version", action="version", version=f"shipit {_version()}")
@@ -42,6 +49,12 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(f"--flavor must be at most {FLAVOR_MAX} characters")
     if flavor is not None:
         kwargs["flavor"] = flavor
+    try:
+        token = clean_token(args.token)
+    except ValueError:
+        parser.error("--token contains invalid characters")
+    if token is not None:
+        kwargs["token"] = token
     if args.json:
         try:
             if args.host is not None:

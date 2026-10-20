@@ -205,3 +205,64 @@ def test_flavor_too_long(json_env, capsys, tmp_path):
     assert exc.value.code != 0
     assert "80" in capsys.readouterr().err
     assert not (tmp_path / "o.png").exists()
+
+
+def _token_env(monkeypatch):
+    from shipit import core
+
+    seen = {}
+
+    def fake_fetch(ref, host=None, token=None):
+        seen["token"] = token
+        return ref
+
+    monkeypatch.setattr(core, "parse_pr_url", lambda url, host=None: url)
+    monkeypatch.setattr(core, "fetch_pr", fake_fetch)
+    monkeypatch.setattr(core, "build_stats", lambda pr, show_bots=False: _fake_stats())
+    monkeypatch.setattr(core, "get_art", lambda stats, use_gemini=True: (None, "procedural"))
+    monkeypatch.setattr(core, "card_png", lambda stats, art: b"png")
+    return seen
+
+
+def test_token_png(monkeypatch, tmp_path, capsys):
+    seen = _token_env(monkeypatch)
+    out = tmp_path / "out.png"
+    assert main([URL, "--token", " ghp_secret ", "-o", str(out)]) == 0
+    assert seen["token"] == "ghp_secret"
+    captured = capsys.readouterr()
+    assert "ghp_secret" not in captured.out + captured.err
+    assert b"ghp_secret" not in out.read_bytes()
+
+
+def test_token_json(monkeypatch, tmp_path, capsys):
+    seen = _token_env(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    assert main([URL, "--json", "--token", "ghp_secret"]) == 0
+    assert seen["token"] == "ghp_secret"
+    captured = capsys.readouterr()
+    assert "ghp_secret" not in captured.out + captured.err
+    assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("value", ["", "   "])
+def test_blank_token_is_unset(monkeypatch, tmp_path, value):
+    seen = _token_env(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    assert main([URL, "--json", "--token", value]) == 0
+    assert seen["token"] is None
+
+
+def test_token_control_chars_rejected(monkeypatch, capsys):
+    _token_env(monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        main([URL, "--json", "--token", "abc\r\nX-Evil: 1"])
+    assert exc.value.code == 2
+    captured = capsys.readouterr()
+    assert "X-Evil" not in captured.out + captured.err
+
+
+def test_token_in_docs():
+    from shipit import __main__ as cli
+
+    assert "--token" in cli.__doc__
+    assert "--token" in (Path(__file__).parent.parent / "README.md").read_text()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import html
 import os
 from collections import deque
@@ -9,13 +10,14 @@ from urllib.parse import quote
 from xml.sax.saxutils import escape as xml_escape
 
 import httpx
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, Response
 
 from .card import RARITY_COLOURS
 from .core import FLAVOR_MAX, Card, make_card, normalize_flavor
-from .github import BadPRUrl, validate_host
+from .github import BadPRUrl, clean_token, validate_host
 
+TOKEN_MAX = 500
 app = FastAPI(title="ship-it-card")
 _cache: dict[tuple[str, bool, str | None, str | None], Card] = {}
 RECENT_LIMIT = 20
@@ -33,7 +35,9 @@ PAGE = """<!doctype html>
   main {{ width: min(960px, 92vw); text-align: center; padding: 48px 0; }}
   h1 {{ font-size: 44px; margin: 0 0 4px; letter-spacing: -1px; }}
   p {{ color: #969cb4; margin: 0 0 28px; }}
-  form {{ display: flex; gap: 8px; max-width: 560px; margin: 0 auto; }}
+  form {{ display: flex; flex-wrap: wrap; gap: 8px; max-width: 560px; margin: 0 auto; }}
+  label.tok {{ flex-basis: 100%; font-size: 14px; color: #969cb4; text-align: left; }}
+  label.tok input {{ box-sizing: border-box; width: 100%; margin-top: 4px; }}
   input {{ flex: 1; padding: 14px 16px; border-radius: 12px; border: 1px solid #2a2e45;
            background: #11131f; color: inherit; font-size: 16px; }}
   button {{ padding: 14px 22px; border: 0; border-radius: 12px; background: #ffc440;
@@ -56,9 +60,12 @@ PAGE = """<!doctype html>
 <body><main>
   <h1>ship-it-card</h1>
   <p>Every merged PR deserves a trading card.</p>
-  <form action="/card" method="get">
+  <form action="/card" method="post">
     <input name="url" placeholder="https://github.com/owner/repo/pull/123" value="{value}" required>
     <button type="submit">Ship it</button>
+    <label class="tok">GitHub token for private repos (optional, never stored or shared)
+      <input type="password" name="token" autocomplete="off" maxlength="{token_max}">
+    </label>
   </form>
   {body}
 </main></body></html>"""
@@ -66,7 +73,11 @@ PAGE = """<!doctype html>
 
 @app.get("/", response_class=HTMLResponse)
 def index() -> str:
-    return PAGE.format(value="", body=_gallery(), head="")
+    return _page("", _gallery())
+
+
+def _page(value: str, body: str, head: str = "") -> str:
+    return PAGE.format(value=value, body=body, head=head, token_max=TOKEN_MAX)
 
 
 def _gallery() -> str:
@@ -96,26 +107,61 @@ def card_page(
     host: str | None = Query(None, max_length=300),
     flavor: str | None = Query(None, max_length=FLAVOR_MAX),
 ) -> str:
+    return _render_card(request, url, show_bots, host, flavor)
+
+
+@app.post("/card", response_class=HTMLResponse)
+def card_form(
+    request: Request,
+    url: str = Form(..., max_length=300),
+    token: str | None = Form(None, max_length=TOKEN_MAX),
+    show_bots: bool = Form(False),
+    host: str | None = Form(None, max_length=300),
+    flavor: str | None = Form(None, max_length=FLAVOR_MAX),
+) -> HTMLResponse:
+    """Form submit. A token never reaches a URL, the cache, the gallery or share tags."""
+    headers = {"Cache-Control": "private, no-store"}
+    try:
+        clean = clean_token(token)
+    except ValueError:
+        body = '<div class="err">That token contains invalid characters.</div>'
+        return HTMLResponse(_page(html.escape(url, quote=True), body), 400, headers)
+    host = host or None  # an empty form field means unset
+    flavor = flavor or None
+    return HTMLResponse(_render_card(request, url, show_bots, host, flavor, clean), 200, headers)
+
+
+def _render_card(
+    request: Request,
+    url: str,
+    show_bots: bool,
+    host: str | None,
+    flavor: str | None,
+    token: str | None = None,
+) -> str:
     safe = html.escape(url, quote=True)
     try:
-        card = _get_card(url, show_bots, host, flavor)
+        card = _get_card(url, show_bots, host, flavor, token)
     except HTTPException as exc:
-        return PAGE.format(
-            value=safe, body=f'<div class="err">{html.escape(exc.detail)}</div>', head=""
-        )
+        return _page(safe, f'<div class="err">{html.escape(exc.detail)}</div>')
     alt = html.escape(f"Ship-it card for {card.stats.slug}", quote=True)
+    custom = normalize_flavor(flavor)
+    text = f'<p class="flavor">{html.escape(custom)}</p>' if custom is not None else ""
+    if token is not None:
+        # Private card: inline the image so no URL, og tag or cache entry can expose it.
+        data = base64.b64encode(card.png).decode("ascii")
+        img = f'<img src="data:image/png;base64,{data}" alt="{alt}">'
+        return _page(safe, img + text + _breakdown_html(card))
     extra = "&show_bots=true" if show_bots else ""
     if host is not None:
         extra += f"&host={quote(host, safe='')}"
-    custom = normalize_flavor(flavor)
     if custom is not None:
         extra += f"&flavor={quote(custom, safe='')}"
     query = f"url={quote(url, safe='')}{extra}"
     img = f'<img src="/card.png?{query}" alt="{alt}">'
-    text = f'<p class="flavor">{html.escape(custom)}</p>' if custom is not None else ""
     base = str(request.base_url)
     head = _og_tags(card, f"{base}card?{query}", f"{base}card.png?{query}")
-    return PAGE.format(value=safe, body=img + text + _breakdown_html(card), head=head)
+    return _page(safe, img + text + _breakdown_html(card), head)
 
 
 def _og_tags(card: Card, page_url: str, image_url: str) -> str:
@@ -224,7 +270,11 @@ def _allowed_hosts() -> set[str]:
 
 
 def _get_card(
-    url: str, show_bots: bool = False, host: str | None = None, flavor: str | None = None
+    url: str,
+    show_bots: bool = False,
+    host: str | None = None,
+    flavor: str | None = None,
+    token: str | None = None,
 ) -> Card:
     try:
         custom = normalize_flavor(flavor)
@@ -238,12 +288,14 @@ def _get_card(
         if host not in _allowed_hosts():
             raise HTTPException(400, "That GitHub host is not allowed on this server.")
     key = (url, show_bots, host, custom)
-    if key in _cache:
+    if token is None and key in _cache:
         return _cache[key]
     try:
         kwargs: dict = {} if host is None else {"host": host}
         if custom is not None:
             kwargs["flavor"] = custom
+        if token is not None:
+            kwargs["token"] = token
         card = make_card(url, show_bots=show_bots, **kwargs)
     except BadPRUrl as exc:
         raise HTTPException(400, "That doesn't look like a GitHub pull request URL.") from exc
@@ -251,6 +303,8 @@ def _get_card(
         status = exc.response.status_code
         message = "PR not found." if status == 404 else f"GitHub returned {status}."
         raise HTTPException(502, message) from exc
+    if token is not None:  # private card: never cached, never in the gallery
+        return card
     _cache[key] = card
     if custom is None:  # custom flavours don't create extra gallery entries
         _record(url, show_bots, card, host)
