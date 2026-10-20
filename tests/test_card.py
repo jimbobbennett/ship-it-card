@@ -63,3 +63,56 @@ def test_art_prompt_sanitises_title(pr_data):
     prompt = art_prompt(build_stats(pr_data))
     assert "<script>" not in prompt
     assert "no text" in prompt.lower()
+
+
+def _render(stats, art=None):
+    from shipit.card import render_card
+
+    return render_card(stats, art or procedural_art("fixed", "Rare"))
+
+
+def test_every_rarity_renders_at_size(pr_data):
+    stats = build_stats(pr_data)
+    for rarity in RARITY_COLOURS:
+        stats.rarity = rarity
+        image = _render(stats)
+        assert image.size == (W, H)
+        assert image.mode == "RGBA"
+
+
+def test_render_is_deterministic(pr_data):
+    stats = build_stats(pr_data)
+    art = procedural_art("fixed", "Rare")
+    assert card_png(stats, art) == card_png(stats, art)
+
+
+def test_border_is_not_flat(pr_data):
+    stats = build_stats(pr_data)
+    for rarity in RARITY_COLOURS:
+        stats.rarity = rarity
+        image = _render(stats).convert("RGB")
+        assert len({image.getpixel((x, 12)) for x in range(80, W - 80)}) > 1
+
+
+def test_legendary_differs_from_common_beyond_accent(pr_data):
+    from PIL import ImageChops
+
+    stats = build_stats(pr_data)
+    stats.rarity = "Common"
+    common = _render(stats).convert("L")
+    stats.rarity = "Legendary"
+    legendary = _render(stats).convert("L")
+    region = (0, 0, W, 60)
+    diff = ImageChops.difference(common.crop(region), legendary.crop(region))
+    assert sum(diff.histogram()[41:]) > 200
+
+
+def test_art_region_unchanged_by_rarity(pr_data):
+    stats = build_stats(pr_data)
+    art = procedural_art("fixed", "Rare")
+    box = (80, 250, W - 80, 920)
+    stats.rarity = "Common"
+    a = _render(stats, art).crop(box)
+    stats.rarity = "Legendary"
+    b = _render(stats, art).crop(box)
+    assert a.tobytes() == b.tobytes()
