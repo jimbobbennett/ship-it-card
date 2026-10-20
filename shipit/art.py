@@ -49,6 +49,10 @@ STYLES = {
 DEFAULT_STYLE_PHRASE = "Painterly digital fantasy art, dramatic lighting, rich saturated colours,"
 
 
+class StyledArtUnavailable(RuntimeError):
+    """A styled card was requested but styled art could not be produced."""
+
+
 def art_prompt(stats: CardStats, style: str | None = None) -> str:
     """Build the image prompt. Only short, sanitised strings from the PR reach the model."""
     scene = TYPE_SCENES.get(stats.card_type, TYPE_SCENES["Feature"])
@@ -83,6 +87,10 @@ def get_art(
 ) -> tuple[Image.Image, str]:
     """Return (artwork, source) where source is 'gemini', 'cache' or 'procedural'."""
     key = os.environ.get("GEMINI_API_KEY")
+    if style is not None and not (use_gemini and key):
+        raise StyledArtUnavailable(
+            f"Cannot make '{style}' art without Gemini (set GEMINI_API_KEY and avoid --no-gemini)."
+        )
     if use_gemini and key:
         prompt = art_prompt(stats, style)
         model = os.environ.get("SHIPIT_IMAGE_MODEL", DEFAULT_MODEL)
@@ -92,6 +100,8 @@ def get_art(
         try:
             image = generate_with_gemini(prompt, model, key)
         except Exception as exc:  # noqa: BLE001 - any API failure falls back to procedural art
+            if style is not None:
+                raise StyledArtUnavailable(f"Gemini failed to make '{style}' art: {exc}") from exc
             print(f"[ship-it-card] Gemini art failed, using procedural art: {exc}")
         else:
             CACHE_DIR.mkdir(parents=True, exist_ok=True)

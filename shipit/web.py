@@ -16,7 +16,7 @@ import httpx
 from fastapi import FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, Response
 
-from .art import STYLES
+from .art import STYLES, StyledArtUnavailable
 from .card import RARITY_COLOURS
 from .core import FLAVOR_MAX, Card, make_card, normalize_flavor
 from .github import BadPRUrl, clean_token, validate_host
@@ -391,6 +391,8 @@ def _get_card(
         status = exc.response.status_code
         message = "PR not found." if status == 404 else f"GitHub returned {status}."
         raise HTTPException(502, message) from exc
+    except StyledArtUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
     if token is not None:  # private card: never cached, never in the gallery
         return card
     _cache[key] = card

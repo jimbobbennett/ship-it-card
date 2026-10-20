@@ -14,7 +14,7 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
-from .art import STYLES
+from .art import STYLES, StyledArtUnavailable
 from .core import FLAVOR_MAX, make_card, make_stats, normalize_flavor
 from .github import BadPRUrl, clean_token, validate_host
 
@@ -85,6 +85,9 @@ def main(argv: list[str] | None = None) -> int:
         )
     except BadPRUrl as exc:
         parser.error(str(exc))
+    except StyledArtUnavailable as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
     s = card.stats
     out = args.out or Path(f"{s.repo.split('/')[-1]}-{s.number}.png")

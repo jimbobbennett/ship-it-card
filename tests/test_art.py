@@ -90,6 +90,35 @@ def test_gemini_cache_files_differ_per_style(pr_data, monkeypatch, tmp_path):
     assert len(prompts) == 3
 
 
+def test_styled_art_errors_without_gemini(pr_data, monkeypatch):
+    from shipit import art
+
+    stats = build_stats(pr_data)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    with pytest.raises(art.StyledArtUnavailable):
+        art.get_art(stats, style="pixel")
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    with pytest.raises(art.StyledArtUnavailable):
+        art.get_art(stats, use_gemini=False, style="pixel")
+    assert art.get_art(stats, use_gemini=False)[1] == "procedural"
+
+
+def test_styled_art_errors_when_gemini_fails(pr_data, monkeypatch, tmp_path):
+    from shipit import art
+
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.setattr(art, "CACHE_DIR", tmp_path)
+
+    def boom(prompt, model, key):
+        raise RuntimeError("down")
+
+    monkeypatch.setattr(art, "generate_with_gemini", boom)
+    stats = build_stats(pr_data)
+    with pytest.raises(art.StyledArtUnavailable):
+        art.get_art(stats, style="anime")
+    assert art.get_art(stats)[1] == "procedural"
+
+
 def test_body_in_prompt(pr_data):
     prompt = art_prompt(_stats(pr_data, "Adds a **sparkle** mode, (fast)."))
     assert _body_clause(prompt) == "Adds a sparkle mode, (fast)."
