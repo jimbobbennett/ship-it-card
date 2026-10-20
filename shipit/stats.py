@@ -118,6 +118,19 @@ class Ability:
 
 
 @dataclass
+class ScoreLine:
+    label: str
+    value: str
+    points: int
+
+
+@dataclass
+class ScoreBreakdown:
+    lines: list[ScoreLine]
+    total: int
+
+
+@dataclass
 class CardStats:
     slug: str
     title: str
@@ -140,6 +153,7 @@ class CardStats:
     crew: list[CrewMember] = field(default_factory=list)
     flavor: str = ""
     year: int = 0
+    score_breakdown: ScoreBreakdown | None = None
 
     @property
     def has_agents(self) -> bool:
@@ -165,7 +179,8 @@ def build_stats(data: PRData, show_bots: bool = False) -> CardStats:
     }
     crew = find_crew(data, show_bots=show_bots)
     type_ = card_type(pr.get("title") or "", [lbl.get("name", "") for lbl in pr.get("labels", [])])
-    score = ship_score(additions + deletions, len(reviewers), commits, minutes)
+    breakdown = score_breakdown(additions + deletions, len(reviewers), commits, minutes)
+    score = breakdown.total
 
     return CardStats(
         slug=data.ref.slug,
@@ -190,6 +205,7 @@ def build_stats(data: PRData, show_bots: bool = False) -> CardStats:
         flavor=flavor(
             data.ref.slug, additions + deletions, type_, any(m.kind == "agent" for m in crew)
         ),
+        score_breakdown=breakdown,
         year=(merged_at or created_at or datetime.now(timezone.utc)).year,  # noqa: UP017
     )
 
@@ -261,14 +277,35 @@ def card_type(title: str, labels: list[str]) -> str:
     return "Feature"
 
 
-def ship_score(lines_changed: int, reviewers: int, commits: int, minutes: int | None) -> int:
-    size = 20 * math.log10(1 + lines_changed)
-    team = 5 * min(reviewers, 4)
-    effort = min(commits, 10)
-    speed = 0
-    if minutes is not None:
+def score_breakdown(
+    lines_changed: int, reviewers: int, commits: int, minutes: int | None
+) -> ScoreBreakdown:
+    """Points per ship-score factor, plus the clamped total. The one copy of the formula."""
+    if minutes is None:
+        speed_value, speed = "not merged / unknown", 0
+    else:
+        speed_value = format_duration(minutes)
         speed = 15 if minutes <= 60 else 10 if minutes <= 24 * 60 else 0
-    return max(1, min(99, round(size + team + effort + speed)))
+    size = round(20 * math.log10(1 + lines_changed))
+    lines = [
+        ScoreLine("Size", f"{lines_changed:,} lines changed", size),
+        ScoreLine(
+            "Reviewers",
+            f"{reviewers} reviewer{'s' if reviewers != 1 else ''}",
+            5 * min(reviewers, 4),
+        ),
+        ScoreLine("Commits", f"{commits} commit{'s' if commits != 1 else ''}", min(commits, 10)),
+        ScoreLine("Speed", speed_value, speed),
+    ]
+    raw = sum(line.points for line in lines)
+    total = max(1, min(99, raw))
+    if total != raw:
+        lines.append(ScoreLine("Adjustment", "clamped to 1-99", total - raw))
+    return ScoreBreakdown(lines, total)
+
+
+def ship_score(lines_changed: int, reviewers: int, commits: int, minutes: int | None) -> int:
+    return score_breakdown(lines_changed, reviewers, commits, minutes).total
 
 
 def rarity(score: int) -> str:
