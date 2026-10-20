@@ -17,7 +17,7 @@ _PR_PATH = (
 PR_URL = re.compile(r"^(?:https?://)?(?:www\.)?github\.com" + _PR_PATH)
 
 _LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
-_HOST = re.compile(rf"{_LABEL}(?:\.{_LABEL})*(?::\d{{1,5}})?")
+_HOST = re.compile(rf"{_LABEL}(?:\.{_LABEL})*(?::(?P<port>\d{{1,5}}))?")
 
 
 class BadPRUrl(ValueError):
@@ -26,7 +26,8 @@ class BadPRUrl(ValueError):
 
 def validate_host(host: str) -> str:
     """Return the host lowercased if it is a bare hostname (optional port), else raise."""
-    if not isinstance(host, str) or len(host) > 253 or not _HOST.fullmatch(host):
+    match = _HOST.fullmatch(host) if isinstance(host, str) and len(host) <= 253 else None
+    if not match or (match["port"] is not None and not 1 <= int(match["port"]) <= 65535):
         raise BadPRUrl(f"Not a valid hostname: {host!r}")
     return host.lower()
 

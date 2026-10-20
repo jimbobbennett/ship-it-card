@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import os
 from urllib.parse import quote
 
 import httpx
@@ -14,6 +15,13 @@ from .github import BadPRUrl, validate_host
 
 app = FastAPI(title="ship-it-card")
 _cache: dict[tuple[str, bool, str | None], Card] = {}
+
+
+def allowed_hosts() -> set[str]:
+    """Trusted GHE hosts for the web app, from the comma-separated GHE_HOSTS env var."""
+    raw = os.environ.get("GHE_HOSTS", "")
+    return {h.strip().lower() for h in raw.split(",") if h.strip()}
+
 
 PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -84,6 +92,8 @@ def _get_card(url: str, show_bots: bool = False, host: str | None = None) -> Car
             host = validate_host(host)
         except BadPRUrl as exc:
             raise HTTPException(400, "That doesn't look like a valid GitHub host.") from exc
+        if host not in allowed_hosts():
+            raise HTTPException(400, "That GitHub host is not allowed.")
     key = (url, show_bots, host)
     if key in _cache:
         return _cache[key]

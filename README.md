@@ -40,6 +40,11 @@ Pass `--host ghe.example.com` on the CLI, or `host=ghe.example.com` on the web a
 hostname with an optional port. `GITHUB_TOKEN` is never sent to a custom host; set
 `GHE_TOKEN` to authenticate to it (otherwise requests are unauthenticated).
 
+The web app only accepts hosts listed in the comma-separated `GHE_HOSTS` env var (for
+example `GHE_HOSTS=ghe.example.com,ghe2.example.com:8443`); any other host gets a 400, so the
+server never connects to, or sends `GHE_TOKEN` to, an unlisted host. With `GHE_HOSTS` unset
+the web app rejects every custom host. Ports must be 1 to 65535.
+
 Without `GEMINI_API_KEY` you still get a card, with procedural artwork instead.
 Generated art is cached in `.cache/art/`, keyed by model and prompt.
 

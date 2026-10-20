@@ -45,6 +45,10 @@ def test_host_url_mismatch_rejected():
         "x" * 300,
         "x.com/",
         "x.com:abc",
+        "x.com:0",
+        "x.com:00000",
+        "x.com:65536",
+        "x.com:99999",
     ],
 )
 def test_validate_host_rejects(host):
@@ -52,7 +56,10 @@ def test_validate_host_rejects(host):
         validate_host(host)
 
 
-@pytest.mark.parametrize("host", ["ghe.example.com", "ghe.example.com:8443", "localhost"])
+@pytest.mark.parametrize(
+    "host",
+    ["ghe.example.com", "ghe.example.com:8443", "x.com:1", "x.com:65535", "localhost"],
+)
 def test_validate_host_accepts(host):
     assert validate_host(host) == host
 
@@ -172,6 +179,7 @@ def _host_client(monkeypatch, pr_data):
         return card
 
     monkeypatch.setattr(web, "make_card", fake)
+    monkeypatch.setenv("GHE_HOSTS", "ghe.example.com, Other.Example.com,ghe.example.com:8443")
     web._cache.clear()
     return TestClient(web.app), calls
 
@@ -195,4 +203,20 @@ def test_bad_host(monkeypatch, pr_data):
     assert page.status_code == 200
     assert "<b>" not in page.text
     assert "valid GitHub host" in page.text
+    assert calls == []
+
+
+def test_unlisted_host_rejected(monkeypatch, pr_data):
+    client, calls = _host_client(monkeypatch, pr_data)
+    params = {"url": "https://internal.corp/o/r/pull/1", "host": "internal.corp"}
+    assert client.get("/card.png", params=params).status_code == 400
+    assert "not allowed" in client.get("/card", params=params).text
+    assert calls == []
+
+
+def test_no_allowlist_rejects_all_hosts(monkeypatch, pr_data):
+    client, calls = _host_client(monkeypatch, pr_data)
+    monkeypatch.delenv("GHE_HOSTS")
+    params = {"url": "https://ghe.example.com/o/r/pull/1", "host": "ghe.example.com"}
+    assert client.get("/card.png", params=params).status_code == 400
     assert calls == []
