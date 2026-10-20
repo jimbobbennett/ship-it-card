@@ -512,6 +512,17 @@ def test_token_with_control_chars_rejected(monkeypatch, pr_data):
     assert calls == []
 
 
+def test_oversized_token_rejected_without_echo(monkeypatch, pr_data):
+    client, calls = _token_client(monkeypatch, pr_data)
+    big = "S3CR3T" * 200
+    assert len(big) > web.TOKEN_MAX
+    response = client.post("/card", data={"url": PRIVATE_URL, "token": big})
+    assert response.status_code == 400
+    assert "S3CR3T" not in response.text
+    assert response.headers["cache-control"] == "private, no-store"
+    assert calls == []
+
+
 def test_token_only_sent_to_allowed_host(monkeypatch, pr_data):
     client, calls = _token_client(monkeypatch, pr_data)
     bad = "https://evil.example.com/o/r/pull/1"

@@ -117,7 +117,7 @@ def card_page(
 def card_form(
     request: Request,
     url: str = Form(..., max_length=300),
-    token: str | None = Form(None, max_length=TOKEN_MAX),
+    token: str | None = Form(None),
     show_bots: bool = Form(False),
     host: str | None = Form(None, max_length=300),
     flavor: str | None = Form(None, max_length=FLAVOR_MAX),
@@ -125,9 +125,11 @@ def card_form(
     """Form submit. A token never reaches a URL, the cache, the gallery or share tags."""
     headers = {"Cache-Control": "private, no-store"}
     try:
+        if token is not None and len(token) > TOKEN_MAX:
+            raise ValueError("Token too long.")  # checked here so 422 never echoes it
         clean = clean_token(token)
     except ValueError:
-        body = '<div class="err">That token contains invalid characters.</div>'
+        body = '<div class="err">That token is invalid.</div>'
         return HTMLResponse(_page(html.escape(url, quote=True), body), 400, headers)
     host = host or None  # an empty form field means unset
     flavor = flavor or None

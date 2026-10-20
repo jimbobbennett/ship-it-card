@@ -101,6 +101,10 @@ def fetch_pr(
 ) -> PRData:
     """Fetch the PR, its repo, its commits and its reviews."""
     own_client = client is None
+    extra_headers: dict[str, str] | None = None
+    if client is not None and token and token.strip():
+        # Injected client: apply the explicit token per request without mutating the client.
+        extra_headers = {"Authorization": f"Bearer {token.strip()}"}
     if client is None:
         if host is None:
             base_url, headers = API, _headers(token=token)
@@ -109,17 +113,27 @@ def fetch_pr(
         client = httpx.Client(base_url=base_url, headers=headers, timeout=20)
     try:
         base = f"/repos/{ref.owner}/{ref.repo}"
-        pr = _get(client, f"{base}/pulls/{ref.number}")
-        repo = _get(client, base)
-        commits = _get(client, f"{base}/pulls/{ref.number}/commits", params={"per_page": 100})
-        reviews = _get(client, f"{base}/pulls/{ref.number}/reviews", params={"per_page": 100})
+        h = extra_headers
+        pr = _get(client, f"{base}/pulls/{ref.number}", headers=h)
+        repo = _get(client, base, headers=h)
+        commits = _get(
+            client, f"{base}/pulls/{ref.number}/commits", params={"per_page": 100}, headers=h
+        )
+        reviews = _get(
+            client, f"{base}/pulls/{ref.number}/reviews", params={"per_page": 100}, headers=h
+        )
         return PRData(ref=ref, pr=pr, repo=repo, commits=commits, reviews=reviews)
     finally:
         if own_client:
             client.close()
 
 
-def _get(client: httpx.Client, path: str, params: dict | None = None):
-    response = client.get(path, params=params)
+def _get(
+    client: httpx.Client,
+    path: str,
+    params: dict | None = None,
+    headers: dict[str, str] | None = None,
+):
+    response = client.get(path, params=params, headers=headers)
     response.raise_for_status()
     return response.json()

@@ -88,6 +88,31 @@ def test_fetch_pr_sends_token(monkeypatch):
     assert set(_captured_auth(monkeypatch)) == {"Bearer envtok"}
 
 
+def test_fetch_pr_token_with_injected_client(monkeypatch):
+    import httpx
+
+    from shipit import github
+
+    monkeypatch.setenv("GITHUB_TOKEN", "envtok")
+    seen = []
+
+    def handler(request):
+        seen.append(request.headers.get("authorization"))
+        return httpx.Response(200, json={})
+
+    ref = github.PRRef("o", "r", 1)
+    with httpx.Client(
+        base_url=github.API,
+        headers={"Authorization": "Bearer clienttok"},
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        github.fetch_pr(ref, client=client, token="tok")
+        assert set(seen) == {"Bearer tok"} and len(seen) == 4
+        seen.clear()
+        github.fetch_pr(ref, client=client)
+        assert set(seen) == {"Bearer clienttok"}
+
+
 def test_clean_token():
     from shipit.github import clean_token
 
