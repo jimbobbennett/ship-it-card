@@ -21,6 +21,7 @@ cp .env.example .env       # add GEMINI_API_KEY (and optionally GITHUB_TOKEN)
 
 # CLI
 uv run python -m shipit https://github.com/simonw/llm/pull/1741 -o card.png
+uv run python -m shipit https://github.com/simonw/llm/pull/1741 --json   # stats as JSON, no art/PNG
 uv run python -m shipit --version   # print the installed version
 
 # Web app on http://localhost:8000
