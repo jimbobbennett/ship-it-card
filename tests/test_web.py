@@ -1,3 +1,5 @@
+import dataclasses
+
 from fastapi.testclient import TestClient
 
 from shipit import web
@@ -54,7 +56,95 @@ def test_bad_url_shows_friendly_error():
     assert "pull request URL" in response.text
 
 
-def _fake_card(monkeypatch, pr_data, calls=None, **overrides):
+def _fake_card(pr_data, title=None):
+    stats = build_stats(pr_data)
+    if title is not None:
+        stats = dataclasses.replace(stats, title=title)
+    return Card(stats, b"png", "procedural")
+
+
+def _reset():
+    web._cache.clear()
+    web._recent.clear()
+
+
+def test_empty_home_has_no_gallery():
+    _reset()
+    text = TestClient(web.app).get("/").text
+    assert '<div class="gallery">' not in text
+    assert "<form" in text and "ship-it-card" in text
+
+
+def test_card_appears_on_home(monkeypatch, pr_data):
+    _reset()
+    card = _fake_card(pr_data)
+    monkeypatch.setattr(web, "make_card", lambda url, show_bots=False: card)
+    client = TestClient(web.app)
+    url = "https://github.com/o/r/pull/1"
+    q = "https%3A%2F%2Fgithub.com%2Fo%2Fr%2Fpull%2F1"
+    client.get("/card", params={"url": url})
+    text = client.get("/").text
+    assert f'<a href="/card?url={q}">' in text
+    assert f'src="/card.png?url={q}"' in text
+    assert 'loading="lazy"' in text
+    assert card.stats.title in text
+    assert card.stats.slug.split("#")[0] in text
+    client.get("/card", params={"url": url, "show_bots": "true"})
+    assert f'href="/card?url={q}&show_bots=true"' in client.get("/").text
+    assert '<div class="gallery">' not in client.get("/card", params={"url": url}).text
+
+
+def test_order_cap_and_no_duplicates(monkeypatch, pr_data):
+    _reset()
+    card = _fake_card(pr_data)
+    monkeypatch.setattr(web, "make_card", lambda url, show_bots=False: card)
+    client = TestClient(web.app)
+    for i in range(25):
+        client.get("/card.png", params={"url": f"https://github.com/o/r/pull/{i}"})
+    client.get("/card.png", params={"url": "https://github.com/o/r/pull/24"})  # repeat
+    text = client.get("/").text
+    assert text.count('loading="lazy"') == 20
+    assert 'pull%2F24"' in text and 'pull%2F5"' in text
+    assert 'pull%2F4"' not in text
+    assert text.index('pull%2F24"') < text.index('pull%2F23"')
+    assert len(web._recent) == 20
+    assert len({(e["url"], e["show_bots"]) for e in web._recent}) == 20
+
+
+def test_repeat_url_not_duplicated(monkeypatch, pr_data):
+    _reset()
+    card = _fake_card(pr_data)
+    monkeypatch.setattr(web, "make_card", lambda url, show_bots=False: card)
+    client = TestClient(web.app)
+    for _ in range(3):
+        client.get("/card", params={"url": "https://github.com/o/r/pull/1"})
+    assert len(web._recent) == 1
+
+
+def test_failed_lookup_not_recorded(monkeypatch):
+    _reset()
+
+    def boom(url, show_bots=False):
+        raise web.BadPRUrl("nope")
+
+    monkeypatch.setattr(web, "make_card", boom)
+    TestClient(web.app).get("/card", params={"url": "https://example.com/x"})
+    assert not web._recent
+    assert 'loading="lazy"' not in TestClient(web.app).get("/").text
+
+
+def test_title_is_escaped(monkeypatch, pr_data):
+    _reset()
+    card = _fake_card(pr_data, title="<script>alert(1)</script>")
+    monkeypatch.setattr(web, "make_card", lambda url, show_bots=False: card)
+    client = TestClient(web.app)
+    client.get("/card.png", params={"url": "https://github.com/o/r/pull/1"})
+    text = client.get("/").text
+    assert "<script>alert(1)</script>" not in text
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in text
+
+
+def _badge_card(monkeypatch, pr_data, calls=None, **overrides):
     from dataclasses import replace
 
     stats = replace(build_stats(pr_data), **overrides)
@@ -77,7 +167,7 @@ def test_badge_ok_and_cache(monkeypatch, pr_data):
     from xml.etree import ElementTree
 
     calls = []
-    stats = _fake_card(monkeypatch, pr_data, calls, rarity="Rare", ship_score=72)
+    stats = _badge_card(monkeypatch, pr_data, calls, rarity="Rare", ship_score=72)
     client = TestClient(web.app)
     response = client.get("/badge.svg", params=BADGE_URL)
     client.get("/badge.svg", params=BADGE_URL)
@@ -97,7 +187,7 @@ def test_badge_colours_all_rarities(monkeypatch, pr_data):
     client = TestClient(web.app)
     fills = {}
     for name in ["Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic"]:
-        _fake_card(monkeypatch, pr_data, rarity=name)
+        _badge_card(monkeypatch, pr_data, rarity=name)
         fills[name] = client.get("/badge.svg", params=BADGE_URL).text
     colours = {n: web._hex(web.RARITY_COLOURS[n]) for n in web.RARITY_COLOURS}
     assert len(set(colours.values())) == 5
@@ -109,7 +199,7 @@ def test_badge_colours_all_rarities(monkeypatch, pr_data):
 def test_badge_escapes_and_truncates(monkeypatch, pr_data):
     from xml.etree import ElementTree
 
-    _fake_card(monkeypatch, pr_data, title='<script>alert(1)</script> & "x"' + "y" * 80)
+    _badge_card(monkeypatch, pr_data, title='<script>alert(1)</script> & "x"' + "y" * 80)
     text = TestClient(web.app).get("/badge.svg", params=BADGE_URL).text
     assert "<script>" not in text
     assert "…" in text
