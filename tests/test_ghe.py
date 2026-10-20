@@ -179,7 +179,6 @@ def _host_client(monkeypatch, pr_data):
         return card
 
     monkeypatch.setattr(web, "make_card", fake)
-    monkeypatch.setenv("GHE_HOSTS", "ghe.example.com, Other.Example.com,ghe.example.com:8443")
     web._cache.clear()
     return TestClient(web.app), calls
 
@@ -206,17 +205,8 @@ def test_bad_host(monkeypatch, pr_data):
     assert calls == []
 
 
-def test_unlisted_host_rejected(monkeypatch, pr_data):
+def test_host_works_without_any_configuration(monkeypatch, pr_data):
     client, calls = _host_client(monkeypatch, pr_data)
-    params = {"url": "https://internal.corp/o/r/pull/1", "host": "internal.corp"}
-    assert client.get("/card.png", params=params).status_code == 400
-    assert "not allowed" in client.get("/card", params=params).text
-    assert calls == []
-
-
-def test_no_allowlist_rejects_all_hosts(monkeypatch, pr_data):
-    client, calls = _host_client(monkeypatch, pr_data)
-    monkeypatch.delenv("GHE_HOSTS")
     params = {"url": "https://ghe.example.com/o/r/pull/1", "host": "ghe.example.com"}
-    assert client.get("/card.png", params=params).status_code == 400
-    assert calls == []
+    assert client.get("/card.png", params=params).status_code == 200
+    assert calls == ["ghe.example.com"]
