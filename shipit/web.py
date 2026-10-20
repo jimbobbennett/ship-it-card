@@ -10,7 +10,7 @@ import re
 import tempfile
 from collections import deque
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 from xml.sax.saxutils import escape as xml_escape
 
 import httpx
@@ -154,8 +154,17 @@ _COPY_SCRIPT = (
 )
 
 
-def _actions_html(png_href: str, filename: str, copy_url: str | None) -> str:
-    """Download link and, for shareable cards only, a copy-link button. Inputs are escaped."""
+def _share_link(label: str, href: str) -> str:
+    return (
+        f'<a class="btn" href="{html.escape(href, quote=True)}" '
+        f'target="_blank" rel="noopener noreferrer">{label}</a>'
+    )
+
+
+def _actions_html(
+    png_href: str, filename: str, copy_url: str | None, share_text: str | None = None
+) -> str:
+    """Download link and, for shareable cards only, copy-link and share links (escaped)."""
     parts = [
         f'<a class="btn" href="{html.escape(png_href, quote=True)}" '
         f'download="{html.escape(filename, quote=True)}">Download PNG</a>'
@@ -164,6 +173,16 @@ def _actions_html(png_href: str, filename: str, copy_url: str | None) -> str:
         parts.append(
             f'<button type="button" data-url="{html.escape(copy_url, quote=True)}">'
             "Copy link</button>"
+        )
+    if copy_url is not None and share_text is not None:
+        x_query = urlencode({"text": share_text, "url": copy_url}, quote_via=quote)
+        parts.append(_share_link("Share on X", f"https://twitter.com/intent/tweet?{x_query}"))
+        li_query = urlencode({"url": copy_url}, quote_via=quote)
+        parts.append(
+            _share_link(
+                "Share on LinkedIn",
+                f"https://www.linkedin.com/sharing/share-offsite/?{li_query}",
+            )
         )
     script = _COPY_SCRIPT if copy_url is not None else ""
     return f'<div class="actions">{"".join(parts)}</div>{script}'
@@ -206,7 +225,8 @@ def _render_card(
     base = str(request.base_url)
     page_url = f"{base}card?{query}"
     head = _og_tags(card, page_url, f"{base}card.png?{query}")
-    actions = _actions_html(f"/card.png?{query}", filename, page_url)
+    share_text = f"My PR scored {card.stats.ship_score} ({card.stats.rarity}) on ship-it-card 🚀"
+    actions = _actions_html(f"/card.png?{query}", filename, page_url, share_text)
     return _page(safe, img + actions + text + _breakdown_html(card), head)
 
 
