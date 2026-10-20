@@ -20,6 +20,18 @@ AGENT_NAMES = {
     "gemini": "Gemini",
     "jules": "Jules",
     "amp": "Amp",
+    "windsurf": "Windsurf",
+    "kiro": "Kiro",
+    "openhands": "OpenHands",
+    "droid": "Factory",
+    "droids": "Factory",
+}
+
+# Multi-word names, matched as consecutive words. A lone "q", "all" or "hands" is not an agent.
+AGENT_PHRASES = {
+    ("amazon", "q"): "Amazon Q",
+    ("open", "hands"): "OpenHands",
+    ("all", "hands"): "OpenHands",
 }
 
 AGENT_EMAILS = {
@@ -227,6 +239,9 @@ def _agent_name(text: str) -> str | None:
     for word in words:
         if word in AGENT_NAMES:
             return AGENT_NAMES[word]
+    for pair in zip(words, words[1:], strict=False):
+        if pair in AGENT_PHRASES:
+            return AGENT_PHRASES[pair]
     return None
 
 
