@@ -1,4 +1,6 @@
 import dataclasses
+import html
+import re
 
 from fastapi.testclient import TestClient
 
@@ -275,3 +277,73 @@ def test_badge_errors():
     assert response.status_code == 400
     assert "<script>" not in response.text
     assert client.get("/badge.svg").status_code == 422
+
+
+OG_URL = "https://github.com/o/r/pull/1"
+OG_Q = "url=https%3A%2F%2Fgithub.com%2Fo%2Fr%2Fpull%2F1"
+
+
+def _meta(text, key):
+    m = re.search(rf'<meta (?:property|name)="{key}" content="([^"]*)">', text)
+    assert m, key
+    return html.unescape(m.group(1))
+
+
+def test_og_tags_present(monkeypatch, pr_data):
+    _reset()
+    card = _fake_card(pr_data)
+    monkeypatch.setattr(web, "make_card", lambda url, show_bots=False: card)
+    text = TestClient(web.app).get("/card", params={"url": OG_URL}).text
+    head = text.split("</head>")[0]
+    for key in (
+        "og:title",
+        "og:description",
+        "og:image",
+        "og:type",
+        "og:url",
+        "twitter:card",
+        "twitter:title",
+        "twitter:description",
+        "twitter:image",
+    ):
+        assert f'"{key}"' in head
+    assert _meta(text, "twitter:card") == "summary_large_image"
+    assert card.stats.title in _meta(text, "og:title")
+    assert card.stats.slug in _meta(text, "og:title")
+    desc = _meta(text, "og:description")
+    assert card.stats.rarity in desc and f"Ship score {card.stats.ship_score}" in desc
+    assert _meta(text, "og:image") == f"http://testserver/card.png?{OG_Q}"
+    assert _meta(text, "og:url") == f"http://testserver/card?{OG_Q}"
+    assert "<title>ship-it-card</title>" in head
+
+
+def test_og_image_carries_params(monkeypatch, pr_data):
+    _reset()
+    card = _fake_card(pr_data)
+    monkeypatch.setattr(web, "make_card", lambda url, show_bots=False, host=None: card)
+    monkeypatch.setenv("SHIPIT_ALLOWED_HOSTS", "ghe.example.com")
+    params = {"url": OG_URL, "show_bots": "true", "host": "ghe.example.com"}
+    text = TestClient(web.app).get("/card", params=params).text
+    expected = f"{OG_Q}&show_bots=true&host=ghe.example.com"
+    assert _meta(text, "og:image") == f"http://testserver/card.png?{expected}"
+    assert _meta(text, "twitter:image") == f"http://testserver/card.png?{expected}"
+    assert _meta(text, "og:url") == f"http://testserver/card?{expected}"
+
+
+def test_og_tags_escape_hostile_title(monkeypatch, pr_data):
+    _reset()
+    card = _fake_card(pr_data, title='"><script>alert(1)</script>')
+    monkeypatch.setattr(web, "make_card", lambda url, show_bots=False: card)
+    text = TestClient(web.app).get("/card", params={"url": OG_URL}).text
+    assert "<script>" not in text
+    assert "&quot;&gt;&lt;script&gt;" in text.split("</head>")[0]
+    assert _meta(text, "og:title").startswith('"><script>')
+
+
+def test_no_og_tags_on_error_and_index():
+    _reset()
+    client = TestClient(web.app)
+    bad = client.get("/card", params={"url": "nope"}).text
+    assert "pull request URL" in bad
+    assert "og:" not in bad and "twitter:" not in bad
+    assert "og:" not in client.get("/").text
