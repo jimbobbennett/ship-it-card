@@ -32,6 +32,21 @@ def validate_host(host: str) -> str:
     return host.lower()
 
 
+def clean_token(token: str | None) -> str | None:
+    """Strip a user-supplied token; None if unset/blank. Raises ValueError on control chars.
+
+    The error text never includes the token itself.
+    """
+    if token is None:
+        return None
+    token = token.strip()
+    if not token:
+        return None
+    if any(ord(c) < 32 or ord(c) == 127 or not c.isascii() for c in token):
+        raise ValueError("Token contains invalid characters.")
+    return token
+
+
 @dataclass(frozen=True)
 class PRRef:
     owner: str
@@ -63,41 +78,62 @@ def parse_pr_url(url: str, host: str | None = None) -> PRRef:
     return PRRef(match["owner"], match["repo"], int(match["number"]))
 
 
-def _headers(host: str | None = None) -> dict[str, str]:
+def _headers(host: str | None = None, token: str | None = None) -> dict[str, str]:
     headers = {
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
         "User-Agent": "ship-it-card",
     }
-    # Never send the github.com token to a custom host.
-    token = os.environ.get("GITHUB_TOKEN" if host is None else "GHE_TOKEN")
+    # An explicit per-request token wins. Otherwise never send the github.com token to a
+    # custom host.
+    if not token:
+        token = os.environ.get("GITHUB_TOKEN" if host is None else "GHE_TOKEN")
     if token:
         headers["Authorization"] = f"Bearer {token}"
     return headers
 
 
-def fetch_pr(ref: PRRef, client: httpx.Client | None = None, host: str | None = None) -> PRData:
+def fetch_pr(
+    ref: PRRef,
+    client: httpx.Client | None = None,
+    host: str | None = None,
+    token: str | None = None,
+) -> PRData:
     """Fetch the PR, its repo, its commits and its reviews."""
     own_client = client is None
+    extra_headers: dict[str, str] | None = None
+    if client is not None and token and token.strip():
+        # Injected client: apply the explicit token per request without mutating the client.
+        extra_headers = {"Authorization": f"Bearer {token.strip()}"}
     if client is None:
         if host is None:
-            base_url, headers = API, _headers()
+            base_url, headers = API, _headers(token=token)
         else:
-            base_url, headers = f"https://{validate_host(host)}/api/v3", _headers(host)
+            base_url, headers = f"https://{validate_host(host)}/api/v3", _headers(host, token)
         client = httpx.Client(base_url=base_url, headers=headers, timeout=20)
     try:
         base = f"/repos/{ref.owner}/{ref.repo}"
-        pr = _get(client, f"{base}/pulls/{ref.number}")
-        repo = _get(client, base)
-        commits = _get(client, f"{base}/pulls/{ref.number}/commits", params={"per_page": 100})
-        reviews = _get(client, f"{base}/pulls/{ref.number}/reviews", params={"per_page": 100})
+        h = extra_headers
+        pr = _get(client, f"{base}/pulls/{ref.number}", headers=h)
+        repo = _get(client, base, headers=h)
+        commits = _get(
+            client, f"{base}/pulls/{ref.number}/commits", params={"per_page": 100}, headers=h
+        )
+        reviews = _get(
+            client, f"{base}/pulls/{ref.number}/reviews", params={"per_page": 100}, headers=h
+        )
         return PRData(ref=ref, pr=pr, repo=repo, commits=commits, reviews=reviews)
     finally:
         if own_client:
             client.close()
 
 
-def _get(client: httpx.Client, path: str, params: dict | None = None):
-    response = client.get(path, params=params)
+def _get(
+    client: httpx.Client,
+    path: str,
+    params: dict | None = None,
+    headers: dict[str, str] | None = None,
+):
+    response = client.get(path, params=params, headers=headers)
     response.raise_for_status()
     return response.json()

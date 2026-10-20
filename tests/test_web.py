@@ -417,3 +417,120 @@ def test_no_og_tags_on_error_and_index():
     assert "pull request URL" in bad
     assert "og:" not in bad and "twitter:" not in bad
     assert "og:" not in client.get("/").text
+
+
+SECRET = "ghp_supersecret123"
+PRIVATE_URL = "https://github.com/octo/private/pull/7"
+PUBLIC = "https://github.com/octo/widgets/pull/42"
+
+
+def _token_client(monkeypatch, pr_data, fail_status=None):
+    import httpx
+
+    calls = []
+
+    def fake(url, show_bots=False, host=None, token=None):
+        calls.append({"url": url, "host": host, "token": token})
+        if token is None or fail_status is not None:
+            status = fail_status or 404
+            request = httpx.Request("GET", "https://api.github.com/x")
+            raise httpx.HTTPStatusError(
+                "err", request=request, response=httpx.Response(status, request=request)
+            )
+        return _host_card(pr_data)
+
+    monkeypatch.setattr(web, "make_card", fake)
+    monkeypatch.delenv("SHIPIT_ALLOWED_HOSTS", raising=False)
+    web._cache.clear()
+    web._recent.clear()
+    return TestClient(web.app), calls
+
+
+def test_form_has_password_input_and_posts():
+    page = TestClient(web.app).get("/").text
+    assert re.search(r'<input type="password" name="token" autocomplete="off"', page)
+    assert 'method="post"' in page
+
+
+def test_post_with_token(monkeypatch, pr_data):
+    client, calls = _token_client(monkeypatch, pr_data)
+    response = client.post("/card", data={"url": PRIVATE_URL, "token": f" {SECRET} "})
+    assert response.status_code == 200
+    assert calls == [{"url": PRIVATE_URL, "host": None, "token": SECRET}]
+    assert "data:image/png;base64," in response.text
+    assert SECRET not in response.text
+    assert "/card.png?" not in response.text
+    assert "og:" not in response.text and "twitter:" not in response.text
+    assert response.headers["cache-control"] == "private, no-store"
+    assert not web._cache
+    assert not web._recent
+
+
+def test_tokened_card_not_served_to_others(monkeypatch, pr_data):
+    client, calls = _token_client(monkeypatch, pr_data)
+    client.post("/card", data={"url": PRIVATE_URL, "token": SECRET})
+    response = client.get("/card.png", params={"url": PRIVATE_URL})
+    assert response.status_code == 502
+    assert calls[-1]["token"] is None
+    assert list(web._recent) == []
+    assert PRIVATE_URL not in client.get("/").text
+
+
+def test_token_query_param_ignored(monkeypatch, pr_data):
+    client, calls = _token_client(monkeypatch, pr_data)
+    for path in ("/card", "/card.png", "/badge.svg"):
+        client.get(path, params={"url": PRIVATE_URL, "token": SECRET})
+    assert len(calls) == 3 and all(c["token"] is None for c in calls)
+
+
+def test_blank_token_is_public_flow(monkeypatch, pr_data):
+    client, _ = _token_client(monkeypatch, pr_data)
+    monkeypatch.setattr(web, "make_card", lambda url, show_bots=False, **kw: _host_card(pr_data))
+    response = client.post("/card", data={"url": PUBLIC, "token": "   "})
+    assert "/card.png?url=" in response.text
+    assert "og:image" in response.text
+    assert len(web._recent) == 1 and len(web._cache) == 1
+    assert client.get("/card", params={"url": PUBLIC}).status_code == 200
+
+
+def test_token_error_hides_token(monkeypatch, pr_data):
+    for status in (401, 403, 404):
+        client, _ = _token_client(monkeypatch, pr_data, fail_status=status)
+        response = client.post("/card", data={"url": PRIVATE_URL, "token": SECRET})
+        assert SECRET not in response.text
+        expected = "PR not found." if status == 404 else f"GitHub returned {status}."
+        assert expected in response.text
+        assert 'type="password"' in response.text
+        assert response.headers["cache-control"] == "private, no-store"
+
+
+def test_token_with_control_chars_rejected(monkeypatch, pr_data):
+    client, calls = _token_client(monkeypatch, pr_data)
+    response = client.post("/card", data={"url": PRIVATE_URL, "token": "abc\r\nX-Evil: 1"})
+    assert response.status_code == 400
+    assert "X-Evil" not in response.text
+    assert calls == []
+
+
+def test_oversized_token_rejected_without_echo(monkeypatch, pr_data):
+    client, calls = _token_client(monkeypatch, pr_data)
+    big = "S3CR3T" * 200
+    assert len(big) > web.TOKEN_MAX
+    response = client.post("/card", data={"url": PRIVATE_URL, "token": big})
+    assert response.status_code == 400
+    assert "S3CR3T" not in response.text
+    assert response.headers["cache-control"] == "private, no-store"
+    assert calls == []
+
+
+def test_token_only_sent_to_allowed_host(monkeypatch, pr_data):
+    client, calls = _token_client(monkeypatch, pr_data)
+    bad = "https://evil.example.com/o/r/pull/1"
+    response = client.post("/card", data={"url": bad, "token": SECRET, "host": "evil.example.com"})
+    assert "not allowed" in response.text
+    assert SECRET not in response.text
+    assert calls == []
+    monkeypatch.setenv("SHIPIT_ALLOWED_HOSTS", "ghe.example.com")
+    good = "https://ghe.example.com/o/r/pull/1"
+    client.post("/card", data={"url": good, "token": SECRET, "host": "ghe.example.com"})
+    assert calls == [{"url": good, "host": "ghe.example.com", "token": SECRET}]
