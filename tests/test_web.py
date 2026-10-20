@@ -52,3 +52,74 @@ def test_bad_url_shows_friendly_error():
     assert response.status_code == 200
     assert "<script>alert(1)</script>" not in response.text
     assert "pull request URL" in response.text
+
+
+def _fake_card(monkeypatch, pr_data, calls=None, **overrides):
+    from dataclasses import replace
+
+    stats = replace(build_stats(pr_data), **overrides)
+    card = Card(stats, b"", "procedural")
+
+    def fake(url, show_bots=False):
+        if calls is not None:
+            calls.append(url)
+        return card
+
+    monkeypatch.setattr(web, "make_card", fake)
+    web._cache.clear()
+    return stats
+
+
+BADGE_URL = {"url": "https://github.com/o/r/pull/1"}
+
+
+def test_badge_ok_and_cache(monkeypatch, pr_data):
+    from xml.etree import ElementTree
+
+    calls = []
+    stats = _fake_card(monkeypatch, pr_data, calls, rarity="Rare", ship_score=72)
+    client = TestClient(web.app)
+    response = client.get("/badge.svg", params=BADGE_URL)
+    client.get("/badge.svg", params=BADGE_URL)
+    assert len(calls) == 1
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/svg+xml")
+    assert response.headers["cache-control"].startswith("public, max-age=")
+    root = ElementTree.fromstring(response.text)
+    assert root.tag == "{http://www.w3.org/2000/svg}svg"
+    assert root.get("width") and root.get("height")
+    assert stats.repo in root.get("aria-label")
+    assert "Rare 72" in response.text
+    assert "#58a0ff" in response.text
+
+
+def test_badge_colours_all_rarities(monkeypatch, pr_data):
+    client = TestClient(web.app)
+    fills = {}
+    for name in ["Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic"]:
+        _fake_card(monkeypatch, pr_data, rarity=name)
+        fills[name] = client.get("/badge.svg", params=BADGE_URL).text
+    colours = {n: web._hex(web.RARITY_COLOURS[n]) for n in web.RARITY_COLOURS}
+    assert len(set(colours.values())) == 5
+    for name, colour in colours.items():
+        assert f'fill="{colour}"' in fills[name]
+    assert f'fill="{colours["Common"]}"' in fills["Mythic"]
+
+
+def test_badge_escapes_and_truncates(monkeypatch, pr_data):
+    from xml.etree import ElementTree
+
+    _fake_card(monkeypatch, pr_data, title='<script>alert(1)</script> & "x"' + "y" * 80)
+    text = TestClient(web.app).get("/badge.svg", params=BADGE_URL).text
+    assert "<script>" not in text
+    assert "…" in text
+    ElementTree.fromstring(text)
+
+
+def test_badge_errors():
+    web._cache.clear()
+    client = TestClient(web.app)
+    response = client.get("/badge.svg", params={"url": "<script>x</script>"})
+    assert response.status_code == 400
+    assert "<script>" not in response.text
+    assert client.get("/badge.svg").status_code == 422
