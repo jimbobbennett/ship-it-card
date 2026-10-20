@@ -9,6 +9,18 @@ def _card_cache_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("SHIPIT_CARD_CACHE_DIR", str(tmp_path / "card-cache"))
 
 
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter(monkeypatch):
+    """The limiter is process-wide; start every test with empty counters and no env overrides."""
+    from shipit import web
+
+    for name in ("SHIPIT_RATE_LIMIT", "SHIPIT_RATE_WINDOW", "SHIPIT_TRUSTED_PROXY_HOPS"):
+        monkeypatch.delenv(name, raising=False)
+    web._limiter.reset()
+    yield
+    web._limiter.reset()
+
+
 @pytest.fixture
 def pr_data() -> PRData:
     return PRData(

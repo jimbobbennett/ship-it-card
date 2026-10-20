@@ -43,6 +43,29 @@ regenerate art. The directory is `SHIPIT_CARD_CACHE_DIR` (default `.cache/cards`
 named by a SHA-256 of the PR URL, `show_bots` and host. There is no expiry: delete the
 directory to refresh. `/card` and `/badge.svg` still use the in-memory cache only.
 
+### Rate limit
+
+Each client IP may generate 30 cards per hour (a sliding window). Only real generations count,
+that is a miss in both the in-memory and the `/card.png` disk cache, so cached cards and the
+home-page gallery are free. It covers `GET`/`POST /card`, `/card.png` and `/badge.svg`; over the
+limit they return `429` with a friendly message and a `Retry-After` header (seconds). Requests
+rejected for invalid input don't count.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `SHIPIT_RATE_LIMIT` | `30` | Cards per window per IP; `0` disables the limit |
+| `SHIPIT_RATE_WINDOW` | `3600` | Window length in seconds |
+| `SHIPIT_TRUSTED_PROXY_HOPS` | `0` | Number of trusted reverse proxies in front of the app |
+
+Invalid values fall back to the defaults. **Behind a reverse proxy** every request appears to
+come from the proxy's IP unless you set `SHIPIT_TRUSTED_PROXY_HOPS=N`; the app then uses the Nth
+entry from the right of `X-Forwarded-For` (the address your outermost trusted proxy saw). Leave
+it at `0` when the app is exposed directly: the header is ignored, so clients can't spoof it.
+Only set it if your proxy really appends to `X-Forwarded-For`.
+
+Counters are per process and kept in memory: they reset on restart and aren't shared between
+workers.
+
 ### Custom flavour text
 
 Pass `--flavor "Ship happens"` on the CLI (PNG and `--json` output), or `flavor=Ship%20happens`
