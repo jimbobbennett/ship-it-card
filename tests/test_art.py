@@ -3,7 +3,7 @@ import re
 
 import pytest
 
-from shipit.art import BODY_LIMIT, art_prompt
+from shipit.art import BODY_LIMIT, LANGUAGE_MOTIFS, STYLES, TYPE_SCENES, art_prompt
 from shipit.stats import build_stats
 
 
@@ -23,6 +23,100 @@ def test_build_stats_maps_body(pr_data):
     assert _stats(pr_data, None).pr_body == ""
     assert build_stats(pr_data).pr_body == ""
     assert _stats(pr_data, "x").description == "Widgets."
+
+
+def test_styles_keys():
+    assert list(STYLES) == ["pixel", "anime", "watercolour", "painterly"]
+
+
+def test_default_prompt_unchanged(pr_data):
+    stats = build_stats(pr_data)
+    assert art_prompt(stats, None) == art_prompt(stats)
+    # Exact pre-styles prompt template (single space after "Painterly"), so the
+    # Gemini cache hash for unstyled cards stays unchanged.
+    scene = TYPE_SCENES.get(stats.card_type, TYPE_SCENES["Feature"])
+    motif = LANGUAGE_MOTIFS.get(stats.language, "")
+    team = (
+        " A small friendly robot works alongside the human, as an equal partner."
+        if stats.has_agents
+        else ""
+    )
+    expected = (
+        f"Full-bleed fantasy illustration: {scene} {motif}. "
+        f'The scene is loosely inspired by a software change called "{stats.title}".{team} '
+        f"{stats.rarity} card energy. Vibrant, optimistic, celebratory mood. Painterly "
+        "digital fantasy art, dramatic lighting, rich saturated colours, centred subject, "
+        "4:3 landscape composition that fills the entire canvas edge to edge. No border, "
+        "no frame, no card outline, no panels. Absolutely no text, letters, numbers, logos "
+        "or watermarks anywhere in the image."
+    )
+    assert art_prompt(stats) == expected
+    assert "Painterly  digital" not in art_prompt(stats)
+
+
+@pytest.mark.parametrize("style", list(STYLES))
+def test_style_prompt(pr_data, style):
+    stats = build_stats(pr_data)
+    prompt = art_prompt(stats, style)
+    assert STYLES[style] in prompt
+    assert "Painterly digital fantasy art" not in prompt
+    assert "steampunk workshop" not in prompt
+    assert "No border, no frame" in prompt
+    assert "Absolutely no text" in prompt
+
+
+def test_gemini_cache_files_differ_per_style(pr_data, monkeypatch, tmp_path):
+    from PIL import Image
+
+    from shipit import art
+
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.setattr(art, "CACHE_DIR", tmp_path)
+    prompts = []
+
+    def fake(prompt, model, key):
+        prompts.append(prompt)
+        return Image.new("RGB", (40, 30))
+
+    monkeypatch.setattr(art, "generate_with_gemini", fake)
+    stats = build_stats(pr_data)
+    assert art.get_art(stats)[1] == "gemini"
+    assert len(list(tmp_path.glob("*.png"))) == 1
+    assert art.get_art(stats, style="pixel")[1] == "gemini"
+    assert art.get_art(stats, style="anime")[1] == "gemini"
+    assert len(list(tmp_path.glob("*.png"))) == 3
+    assert art.get_art(stats, style="pixel")[1] == "cache"
+    assert art.get_art(stats)[1] == "cache"
+    assert len(prompts) == 3
+
+
+def test_styled_art_errors_without_gemini(pr_data, monkeypatch):
+    from shipit import art
+
+    stats = build_stats(pr_data)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    with pytest.raises(art.StyledArtUnavailable):
+        art.get_art(stats, style="pixel")
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    with pytest.raises(art.StyledArtUnavailable):
+        art.get_art(stats, use_gemini=False, style="pixel")
+    assert art.get_art(stats, use_gemini=False)[1] == "procedural"
+
+
+def test_styled_art_errors_when_gemini_fails(pr_data, monkeypatch, tmp_path):
+    from shipit import art
+
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.setattr(art, "CACHE_DIR", tmp_path)
+
+    def boom(prompt, model, key):
+        raise RuntimeError("down")
+
+    monkeypatch.setattr(art, "generate_with_gemini", boom)
+    stats = build_stats(pr_data)
+    with pytest.raises(art.StyledArtUnavailable):
+        art.get_art(stats, style="anime")
+    assert art.get_art(stats)[1] == "procedural"
 
 
 def test_body_in_prompt(pr_data):

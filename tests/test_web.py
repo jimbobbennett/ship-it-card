@@ -1,7 +1,9 @@
 import dataclasses
 import html
 import re
+from urllib.parse import parse_qs, urlsplit
 
+import pytest
 from fastapi.testclient import TestClient
 
 from shipit import web
@@ -294,6 +296,45 @@ def _flavor_env(monkeypatch, pr_data):
 
 
 FLAVOR_URL = "https://github.com/o/r/pull/1"
+
+
+def _style_env(monkeypatch, pr_data):
+    base = build_stats(pr_data)
+    calls = []
+
+    def fake(url, show_bots=False, style=None):
+        calls.append(style)
+        return Card(base, b"\x89PNG" + (style or "").encode(), "procedural")
+
+    monkeypatch.setattr(web, "make_card", fake)
+    _reset()
+    return TestClient(web.app), calls
+
+
+@pytest.mark.parametrize("style", ["pixel", "anime", "watercolour", "painterly"])
+def test_style_valid(monkeypatch, pr_data, style):
+    client, calls = _style_env(monkeypatch, pr_data)
+    assert client.get("/card.png", params={"url": FLAVOR_URL, "style": style}).status_code == 200
+    page = client.get("/card", params={"url": FLAVOR_URL, "style": style})
+    assert page.status_code == 200
+    assert calls == [style]
+    text = page.text
+    assert text.count(f"style={style}") >= 3  # img, og:image/twitter:image, og:url
+
+
+@pytest.mark.parametrize("style", ["Pixel", "neon", "", "pixel&x=1", "<script>"])
+def test_style_invalid(monkeypatch, pr_data, style):
+    client, calls = _style_env(monkeypatch, pr_data)
+    for path in ("/card", "/card.png"):
+        response = client.get(path, params={"url": FLAVOR_URL, "style": style})
+        assert 400 <= response.status_code < 500
+        assert "<script>" not in response.text
+    assert calls == []
+
+
+def test_no_style_links_have_no_style(monkeypatch, pr_data):
+    client, _ = _style_env(monkeypatch, pr_data)
+    assert "style=" not in client.get("/card", params={"url": FLAVOR_URL}).text
 
 
 def test_flavor_png_passed_to_make_card(monkeypatch, pr_data):
@@ -592,3 +633,63 @@ def test_no_actions_on_error_or_index():
     client = TestClient(web.app)
     for text in (client.get("/").text, client.get("/card", params={"url": "nope"}).text):
         assert "Download PNG" not in text and "Copy link" not in text
+        assert "Share on" not in text
+
+
+def _share_hrefs(text):
+    def find(label):
+        m = re.search(
+            r'<a class="btn" href="([^"]*)" target="_blank" '
+            rf'rel="noopener noreferrer">{label}</a>',
+            text,
+        )
+        return html.unescape(m.group(1)) if m else None
+
+    return find("Share on X"), find("Share on LinkedIn")
+
+
+def test_share_links_present(monkeypatch, pr_data):
+    client = _actions_env(monkeypatch, pr_data)
+    text = client.get("/card", params={"url": OG_URL}).text
+    x, li = _share_hrefs(text)
+    card = _fake_card(pr_data)
+    assert x.startswith("https://twitter.com/intent/tweet?")
+    q = parse_qs(urlsplit(x).query, strict_parsing=True)
+    expected = f"My PR scored {card.stats.ship_score} ({card.stats.rarity}) on ship-it-card 🚀"
+    assert q["text"] == [expected]
+    assert q["url"] == [_meta(text, "og:url")] == [_copy_button(text)]
+    assert li.startswith("https://www.linkedin.com/sharing/share-offsite/?")
+    assert parse_qs(urlsplit(li).query) == {"url": [_meta(text, "og:url")]}
+
+
+def test_share_links_keep_params(monkeypatch, pr_data):
+    client = _actions_env(monkeypatch, pr_data)
+    monkeypatch.setenv("SHIPIT_ALLOWED_HOSTS", "x.example")
+    params = {"url": OG_URL, "show_bots": "true", "host": "x.example", "flavor": "hi there"}
+    text = client.get("/card", params=params).text
+    for href in _share_hrefs(text):
+        shared = parse_qs(urlsplit(href).query)["url"][0]
+        assert shared == _meta(text, "og:url")
+        for part in ("show_bots=true", "host=x.example", "flavor=hi%20there"):
+            assert part in shared
+        # The shared URL is fully encoded, so its own '&' never leaks into the outer query.
+        assert "&show_bots" not in href
+
+
+def test_share_links_escape_hostile_input(monkeypatch, pr_data):
+    evil = '"><script>alert(1)</script>'
+    client = _actions_env(monkeypatch, pr_data)
+    text = client.get("/card", params={"url": OG_URL, "flavor": evil}).text
+    assert evil not in text
+    assert all(_share_hrefs(text))
+    assert text.count("<script") == 1
+    _reset()
+    card = _fake_card(pr_data, title=evil)
+    monkeypatch.setattr(web, "make_card", lambda url, show_bots=False, **kw: card)
+    assert evil not in client.get("/card", params={"url": OG_URL}).text
+
+
+def test_no_share_links_for_tokened_card(monkeypatch, pr_data):
+    client, _ = _token_client(monkeypatch, pr_data)
+    text = client.post("/card", data={"url": PRIVATE_URL, "token": SECRET}).text
+    assert "Share on" not in text and "twitter.com" not in text and "linkedin.com" not in text

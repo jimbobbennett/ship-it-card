@@ -199,6 +199,54 @@ def test_flavor_png(monkeypatch, tmp_path):
     assert out.read_bytes() == b"png"
 
 
+def _style_card(monkeypatch):
+    from shipit import __main__ as cli
+    from shipit.core import Card
+
+    seen = {}
+
+    def fake(url, use_gemini=True, show_bots=False, **kw):
+        seen.update(kw)
+        return Card(_fake_stats(), b"png", "procedural")
+
+    monkeypatch.setattr(cli, "make_card", fake)
+    return seen
+
+
+def test_style_passed_to_make_card(monkeypatch, tmp_path):
+    seen = _style_card(monkeypatch)
+    assert main([URL, "--style", "pixel", "-o", str(tmp_path / "c.png")]) == 0
+    assert seen["style"] == "pixel"
+
+
+def test_no_style_not_passed(monkeypatch, tmp_path):
+    seen = _style_card(monkeypatch)
+    assert main([URL, "-o", str(tmp_path / "c.png")]) == 0
+    assert "style" not in seen
+
+
+def test_invalid_style_exits_2(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main([URL, "--style", "neon"])
+    assert exc.value.code == 2
+    assert "usage" in capsys.readouterr().err.lower()
+
+
+def test_style_json_unchanged(json_env, capsys):
+    assert main([URL, "--json"]) == 0
+    plain = capsys.readouterr().out
+    assert main([URL, "--json", "--style", "anime"]) == 0
+    assert capsys.readouterr().out == plain
+    assert list(json.loads(plain)) == JSON_KEYS
+
+
+def test_style_in_docs():
+    import shipit.__main__ as cli
+
+    assert "--style" in cli.__doc__
+    assert "--style" in (Path(__file__).parent.parent / "README.md").read_text()
+
+
 def test_flavor_too_long(json_env, capsys, tmp_path):
     with pytest.raises(SystemExit) as exc:
         main([URL, "--flavor", "x" * 81, "-o", str(tmp_path / "o.png")])
