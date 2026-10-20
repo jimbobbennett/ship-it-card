@@ -534,3 +534,61 @@ def test_token_only_sent_to_allowed_host(monkeypatch, pr_data):
     good = "https://ghe.example.com/o/r/pull/1"
     client.post("/card", data={"url": good, "token": SECRET, "host": "ghe.example.com"})
     assert calls == [{"url": good, "host": "ghe.example.com", "token": SECRET}]
+
+
+def _actions_env(monkeypatch, pr_data):
+    _reset()
+    card = _fake_card(pr_data)
+    monkeypatch.setattr(web, "make_card", lambda url, show_bots=False, **kw: card)
+    return TestClient(web.app)
+
+
+def _copy_button(text):
+    m = re.search(r'<button type="button" data-url="([^"]*)">Copy link</button>', text)
+    return html.unescape(m.group(1)) if m else None
+
+
+def test_card_page_download_and_copy(monkeypatch, pr_data):
+    text = _actions_env(monkeypatch, pr_data).get("/card", params={"url": OG_URL}).text
+    img = re.search(r'<img src="([^"]*)"', text).group(1)
+    m = re.search(r'<a class="btn" href="([^"]*)" download="([^"]*\.png)">Download PNG</a>', text)
+    assert m and m.group(1) == img
+    assert _copy_button(text) == _meta(text, "og:url")
+    assert "navigator.clipboard.writeText" in text
+
+
+def test_actions_carry_params(monkeypatch, pr_data):
+    client = _actions_env(monkeypatch, pr_data)
+    monkeypatch.setenv("SHIPIT_ALLOWED_HOSTS", "x.example")
+    params = {"url": OG_URL, "show_bots": "true", "host": "x.example", "flavor": "hi there"}
+    text = client.get("/card", params=params).text
+    href = re.search(r'<a class="btn" href="([^"]*)"', text).group(1)
+    for part in ("show_bots=true", "host=x.example", "flavor=hi%20there"):
+        assert part in html.unescape(href)
+        assert part in _copy_button(text)
+
+
+def test_actions_escape_hostile_input(monkeypatch, pr_data):
+    client = _actions_env(monkeypatch, pr_data)
+    evil = '"><script>alert(1)</script>'
+    text = client.get("/card", params={"url": OG_URL, "flavor": evil}).text
+    assert evil not in text
+    assert _copy_button(text) == _meta(text, "og:url")
+    assert text.count("<script") == 1
+
+
+def test_tokened_card_has_download_only(monkeypatch, pr_data):
+    client, _ = _token_client(monkeypatch, pr_data)
+    text = client.post("/card", data={"url": PRIVATE_URL, "token": SECRET}).text
+    assert re.search(
+        r'<a class="btn" href="data:image/png;base64,[^"]+" download="[^"]*\.png">Download PNG</a>',
+        text,
+    )
+    assert "Copy link" not in text and "data-url" not in text
+    assert "/card.png" not in text and "clipboard" not in text
+
+
+def test_no_actions_on_error_or_index():
+    client = TestClient(web.app)
+    for text in (client.get("/").text, client.get("/card", params={"url": "nope"}).text):
+        assert "Download PNG" not in text and "Copy link" not in text

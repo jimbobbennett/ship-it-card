@@ -6,6 +6,7 @@ import base64
 import hashlib
 import html
 import os
+import re
 import tempfile
 from collections import deque
 from pathlib import Path
@@ -52,6 +53,10 @@ PAGE = """<!doctype html>
   table.score .pts {{ text-align: right; }}
   main > img {{ display: block; width: 100%; max-width: 560px; margin: 32px auto 0;
                border-radius: 28px; }}
+  .actions {{ display: flex; flex-wrap: wrap; justify-content: center; gap: 8px;
+              margin-top: 20px; }}
+  .actions a.btn {{ padding: 14px 22px; border-radius: 12px; background: #ffc440; color: #000;
+                   font-weight: 700; font-size: 16px; text-decoration: none; }}
   .gallery {{ display: grid; gap: 20px; margin-top: 40px; text-align: left;
               grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }}
   .gallery a {{ color: inherit; text-decoration: none; }}
@@ -136,6 +141,32 @@ def card_form(
     return HTMLResponse(_render_card(request, url, show_bots, host, flavor, clean), 200, headers)
 
 
+_COPY_SCRIPT = (
+    '<script type="text/javascript">'
+    "document.querySelectorAll('button[data-url]').forEach(function(b){"
+    "b.addEventListener('click',function(){var t=b.textContent;"
+    "function done(m){b.textContent=m;setTimeout(function(){b.textContent=t},1500)}"
+    "try{navigator.clipboard.writeText(b.dataset.url).then("
+    "function(){done('Copied!')},function(){done('Copy failed')})}"
+    "catch(e){done('Copy failed')}})})</script>"
+)
+
+
+def _actions_html(png_href: str, filename: str, copy_url: str | None) -> str:
+    """Download link and, for shareable cards only, a copy-link button. Inputs are escaped."""
+    parts = [
+        f'<a class="btn" href="{html.escape(png_href, quote=True)}" '
+        f'download="{html.escape(filename, quote=True)}">Download PNG</a>'
+    ]
+    if copy_url is not None:
+        parts.append(
+            f'<button type="button" data-url="{html.escape(copy_url, quote=True)}">'
+            "Copy link</button>"
+        )
+    script = _COPY_SCRIPT if copy_url is not None else ""
+    return f'<div class="actions">{"".join(parts)}</div>{script}'
+
+
 def _render_card(
     request: Request,
     url: str,
@@ -150,13 +181,16 @@ def _render_card(
     except HTTPException as exc:
         return _page(safe, f'<div class="err">{html.escape(exc.detail)}</div>')
     alt = html.escape(f"Ship-it card for {card.stats.slug}", quote=True)
+    filename = re.sub(r"[^A-Za-z0-9._-]+", "-", card.stats.slug).strip("-") or "ship-it-card"
+    filename += ".png"
     custom = normalize_flavor(flavor)
     text = f'<p class="flavor">{html.escape(custom)}</p>' if custom is not None else ""
     if token is not None:
         # Private card: inline the image so no URL, og tag or cache entry can expose it.
         data = base64.b64encode(card.png).decode("ascii")
         img = f'<img src="data:image/png;base64,{data}" alt="{alt}">'
-        return _page(safe, img + text + _breakdown_html(card))
+        actions = _actions_html(f"data:image/png;base64,{data}", filename, None)
+        return _page(safe, img + actions + text + _breakdown_html(card))
     extra = "&show_bots=true" if show_bots else ""
     if host is not None:
         extra += f"&host={quote(host, safe='')}"
@@ -165,8 +199,10 @@ def _render_card(
     query = f"url={quote(url, safe='')}{extra}"
     img = f'<img src="/card.png?{query}" alt="{alt}">'
     base = str(request.base_url)
-    head = _og_tags(card, f"{base}card?{query}", f"{base}card.png?{query}")
-    return _page(safe, img + text + _breakdown_html(card), head)
+    page_url = f"{base}card?{query}"
+    head = _og_tags(card, page_url, f"{base}card.png?{query}")
+    actions = _actions_html(f"/card.png?{query}", filename, page_url)
+    return _page(safe, img + actions + text + _breakdown_html(card), head)
 
 
 def _og_tags(card: Card, page_url: str, image_url: str) -> str:
