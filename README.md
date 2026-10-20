@@ -34,7 +34,7 @@ the CLI, or `show_bots=true` on the web app (`/card?url=...&show_bots=true` and
 `/card.png?url=...&show_bots=true`), to include the bots; they get their own distinct chip colour and a small `BOT` tag, so humans,
 AI agents and bots are easy to tell apart.
 
-The `/card` page has a **Download PNG** button and a **Copy link** button (copies the shareable page URL; not shown for tokened cards).
+The `/card` page has a **Download PNG** button and a **Copy link** button (copies the shareable page URL), plus **Share on X** and **Share on LinkedIn** links (prefilled with your score and the page URL). Copy link and the share links are not shown for tokened cards.
 
 ### Card cache
 
@@ -71,6 +71,15 @@ workers.
 Pass `--flavor "Ship happens"` on the CLI (PNG and `--json` output), or `flavor=Ship%20happens`
 on the web app (`/card?url=...&flavor=...` and `/card.png?url=...&flavor=...`), to replace the
 generated flavour line. Maximum 80 characters; longer text is rejected.
+
+### Art styles
+
+Pass `--style pixel|anime|watercolour|painterly` on the CLI, or `style=pixel` on the web app
+(`/card?url=...&style=...` and `/card.png?url=...&style=...`), to change the style of the Gemini
+art. With no style the card keeps the current look. Any other value is rejected (web: HTTP 400;
+CLI: usage error). Styled cards are cached separately. A styled request never falls back to the
+procedural art: without `GEMINI_API_KEY`, with `--no-gemini`, or if Gemini fails, it errors instead
+(CLI: exit code 1 with a message; web: HTTP 503).
 
 ### Private repos (your own token)
 
