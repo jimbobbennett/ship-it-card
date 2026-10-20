@@ -56,7 +56,7 @@ Uncommon `#54d6a0`, Rare `#58a0ff`, Epic `#be6eff`, Legendary `#ffc440`. The res
 
 | Field | Where it comes from |
 |---|---|
-| Ship score (1 to 99) | lines changed (log scale), distinct reviewers, commits, and a bonus for merging within a day |
+| Ship score (1 to 99) | lines changed (log scale), distinct reviewers, commits, and a bonus for merging within a day. The `/card` page shows a table of how each factor contributed to the total |
 | Rarity | Common < 40 ≤ Uncommon < 60 ≤ Rare < 75 ≤ Epic < 88 ≤ Legendary |
 | Type | conventional-commit prefix (`feat:`, `fix:`, `docs:` ...) or PR labels |
 | Crew | PR author, commit authors and `Co-Authored-By` trailers; Claude, Codex, Copilot, Cursor, Devin, Windsurf, Kiro, OpenHands, Factory, Amazon Q and friends get an **AI** badge |

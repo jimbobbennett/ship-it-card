@@ -56,6 +56,25 @@ def test_bad_url_shows_friendly_error():
     assert "pull request URL" in response.text
 
 
+def test_card_page_shows_breakdown(monkeypatch, pr_data):
+    stats = build_stats(pr_data)
+    card = Card(stats, card_png(stats, procedural_art(stats.slug, stats.rarity)), "procedural")
+    monkeypatch.setattr(web, "make_card", lambda url, show_bots=False: card)
+    web._cache.clear()
+    client = TestClient(web.app)
+    text = client.get("/card", params={"url": "https://github.com/o/r/pull/1"}).text
+    assert text.index("<img") < text.index("How this score was calculated")
+    for line in stats.score_breakdown.lines:
+        assert line.label in text and line.value in text and f"{line.points:+d}" in text
+    assert f'<th class="pts">{stats.ship_score}</th>' in text
+    assert "How this score" not in client.get("/").text
+    monkeypatch.undo()
+    web._cache.clear()
+    bad = client.get("/card", params={"url": "nope"}).text
+    assert "pull request URL" in bad
+    assert "How this score" not in bad
+
+
 def _fake_card(pr_data, title=None):
     stats = build_stats(pr_data)
     if title is not None:

@@ -222,3 +222,58 @@ def test_lone_q_is_not_an_agent(pr_data):
     assert crew["Q Smith"] == "human"
     assert crew["Factory Worker"] == "human"
     assert not build_stats(pr_data).has_agents
+
+
+def test_breakdown_typical_pr():
+    b = stats.score_breakdown(99, 2, 3, 30)
+    assert [(x.label, x.points) for x in b.lines] == [
+        ("Size", 40),
+        ("Reviewers", 10),
+        ("Commits", 3),
+        ("Speed", 15),
+    ]
+    assert b.lines[0].value == "99 lines changed"
+    assert b.total == 68
+
+
+@pytest.mark.parametrize(
+    ("minutes", "points"), [(None, 0), (0, 15), (60, 15), (61, 10), (1440, 10), (1441, 0)]
+)
+def test_breakdown_speed_tiers(minutes, points):
+    speed = stats.score_breakdown(100, 0, 0, minutes).lines[3]
+    assert speed.points == points
+    if minutes is None:
+        assert "not merged" in speed.value
+
+
+def test_breakdown_caps():
+    b = stats.score_breakdown(100, 9, 50, None)
+    assert b.lines[1].points == 20
+    assert b.lines[2].points == 10
+
+
+def test_breakdown_clamp_rows():
+    low = stats.score_breakdown(0, 0, 0, None)
+    assert low.total == 1
+    assert low.lines[0].points == 0
+    assert (low.lines[-1].label, low.lines[-1].points) == ("Adjustment", 1)
+    high = stats.score_breakdown(10**9, 50, 500, 1)
+    assert high.total == 99
+    assert high.lines[-1].label == "Adjustment" and high.lines[-1].points < 0
+    assert all(x.label != "Adjustment" for x in stats.score_breakdown(99, 2, 3, 30).lines)
+
+
+@pytest.mark.parametrize("lines", [0, 1, 9, 10, 99, 1000, 10**5, 10**9])
+@pytest.mark.parametrize("reviewers", [0, 2, 4, 50])
+@pytest.mark.parametrize("commits", [0, 3, 500])
+@pytest.mark.parametrize("minutes", [None, 5, 600, 5000])
+def test_breakdown_sums_to_total(lines, reviewers, commits, minutes):
+    b = stats.score_breakdown(lines, reviewers, commits, minutes)
+    assert sum(x.points for x in b.lines) == b.total
+    assert b.total == ship_score(lines, reviewers, commits, minutes)
+    assert 1 <= b.total <= 99
+
+
+def test_card_stats_carries_breakdown(pr_data):
+    s = build_stats(pr_data)
+    assert s.score_breakdown.total == s.ship_score

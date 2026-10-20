@@ -37,7 +37,9 @@ def main(argv: list[str] | None = None) -> int:
             stats = make_stats(args.url, show_bots=args.show_bots)
         except BadPRUrl as exc:
             parser.error(str(exc))
-        print(json.dumps(asdict(stats), indent=2))
+        data = asdict(stats)
+        data.pop("score_breakdown", None)  # breakdown is shown on the web page only
+        print(json.dumps(data, indent=2))
         return 0
 
     try:

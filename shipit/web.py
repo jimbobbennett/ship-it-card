@@ -36,6 +36,11 @@ PAGE = """<!doctype html>
            background: #11131f; color: inherit; font-size: 16px; }}
   button {{ padding: 14px 22px; border: 0; border-radius: 12px; background: #ffc440;
             font-weight: 700; font-size: 16px; cursor: pointer; }}
+  table.score {{ width: 100%; margin-top: 24px; border-collapse: collapse; font-size: 15px;
+                text-align: left; }}
+  table.score caption {{ color: #969cb4; text-align: left; padding-bottom: 6px; }}
+  table.score th, table.score td {{ padding: 6px 8px; border-bottom: 1px solid #2a2e45; }}
+  table.score .pts {{ text-align: right; }}
   main > img {{ display: block; width: 100%; max-width: 560px; margin: 32px auto 0;
                border-radius: 28px; }}
   .gallery {{ display: grid; gap: 20px; margin-top: 40px; text-align: left;
@@ -89,7 +94,23 @@ def card_page(url: str = Query(..., max_length=300), show_bots: bool = False) ->
     alt = html.escape(f"Ship-it card for {card.stats.slug}", quote=True)
     extra = "&show_bots=true" if show_bots else ""
     img = f'<img src="/card.png?url={quote(url, safe="")}{extra}" alt="{alt}">'
-    return PAGE.format(value=safe, body=img)
+    return PAGE.format(value=safe, body=img + _breakdown_html(card))
+
+
+def _breakdown_html(card: Card) -> str:
+    breakdown = card.stats.score_breakdown
+    if breakdown is None:
+        return ""
+    rows = "".join(
+        f"<tr><td>{html.escape(line.label)}</td><td>{html.escape(line.value)}</td>"
+        f'<td class="pts">{line.points:+d}</td></tr>'
+        for line in breakdown.lines
+    )
+    return (
+        '<table class="score"><caption>How this score was calculated</caption>'
+        '<tr><th>Factor</th><th>Value</th><th class="pts">Points</th></tr>'
+        f'{rows}<tr><th colspan="2">Total</th><th class="pts">{breakdown.total}</th></tr></table>'
+    )
 
 
 @app.get("/card.png")
