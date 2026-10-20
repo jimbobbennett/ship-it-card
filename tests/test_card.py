@@ -116,3 +116,13 @@ def test_art_region_unchanged_by_rarity(pr_data):
     stats.rarity = "Legendary"
     b = _render(stats, art).crop(box)
     assert a.tobytes() == b.tobytes()
+
+
+def test_long_flavor_fits_and_differs(pr_data):
+    import dataclasses
+
+    stats = build_stats(pr_data)
+    art = procedural_art(stats.slug, stats.rarity)
+    long_png = card_png(dataclasses.replace(stats, flavor="W" * 80), art)
+    assert Image.open(io.BytesIO(long_png)).size == (W, H)
+    assert long_png != card_png(stats, art)

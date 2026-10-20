@@ -326,6 +326,10 @@ def _crew(draw: ImageDraw.ImageDraw, stats: CardStats, accent) -> None:
 def _footer(draw: ImageDraw.ImageDraw, stats: CardStats) -> None:
     flavor_font = font("body", 30, "Light")
     text = f"“{stats.flavor}”"
+    size = 30
+    while draw.textlength(text, font=flavor_font) > W - 2 * PAD and size > 12:
+        size -= 1
+        flavor_font = font("body", size, "Light")
     tw = draw.textlength(text, font=flavor_font)
     draw.text(((W - tw) / 2, 1368), text, font=flavor_font, fill=INK)
 

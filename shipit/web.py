@@ -13,11 +13,11 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, Response
 
 from .card import RARITY_COLOURS
-from .core import Card, make_card
+from .core import FLAVOR_MAX, Card, make_card, normalize_flavor
 from .github import BadPRUrl, validate_host
 
 app = FastAPI(title="ship-it-card")
-_cache: dict[tuple[str, bool, str | None], Card] = {}
+_cache: dict[tuple[str, bool, str | None, str | None], Card] = {}
 RECENT_LIMIT = 20
 # Newest last; one entry per (url, show_bots, host). Metadata only, shared by all visitors.
 _recent: deque[dict] = deque(maxlen=RECENT_LIMIT)
@@ -94,10 +94,11 @@ def card_page(
     url: str = Query(..., max_length=300),
     show_bots: bool = False,
     host: str | None = Query(None, max_length=300),
+    flavor: str | None = Query(None, max_length=FLAVOR_MAX),
 ) -> str:
     safe = html.escape(url, quote=True)
     try:
-        card = _get_card(url, show_bots, host)
+        card = _get_card(url, show_bots, host, flavor)
     except HTTPException as exc:
         return PAGE.format(
             value=safe, body=f'<div class="err">{html.escape(exc.detail)}</div>', head=""
@@ -106,11 +107,15 @@ def card_page(
     extra = "&show_bots=true" if show_bots else ""
     if host is not None:
         extra += f"&host={quote(host, safe='')}"
+    custom = normalize_flavor(flavor)
+    if custom is not None:
+        extra += f"&flavor={quote(custom, safe='')}"
     query = f"url={quote(url, safe='')}{extra}"
     img = f'<img src="/card.png?{query}" alt="{alt}">'
+    text = f'<p class="flavor">{html.escape(custom)}</p>' if custom is not None else ""
     base = str(request.base_url)
     head = _og_tags(card, f"{base}card?{query}", f"{base}card.png?{query}")
-    return PAGE.format(value=safe, body=img + _breakdown_html(card), head=head)
+    return PAGE.format(value=safe, body=img + text + _breakdown_html(card), head=head)
 
 
 def _og_tags(card: Card, page_url: str, image_url: str) -> str:
@@ -155,8 +160,9 @@ def card_image(
     url: str = Query(..., max_length=300),
     show_bots: bool = False,
     host: str | None = Query(None, max_length=300),
+    flavor: str | None = Query(None, max_length=FLAVOR_MAX),
 ) -> Response:
-    card = _get_card(url, show_bots, host)
+    card = _get_card(url, show_bots, host, flavor)
     return Response(card.png, media_type="image/png")
 
 
@@ -217,7 +223,13 @@ def _allowed_hosts() -> set[str]:
     return {h.strip().lower() for h in raw.split(",") if h.strip()}
 
 
-def _get_card(url: str, show_bots: bool = False, host: str | None = None) -> Card:
+def _get_card(
+    url: str, show_bots: bool = False, host: str | None = None, flavor: str | None = None
+) -> Card:
+    try:
+        custom = normalize_flavor(flavor)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     if host is not None:
         try:
             host = validate_host(host)
@@ -225,14 +237,14 @@ def _get_card(url: str, show_bots: bool = False, host: str | None = None) -> Car
             raise HTTPException(400, "That doesn't look like a valid GitHub host.") from exc
         if host not in _allowed_hosts():
             raise HTTPException(400, "That GitHub host is not allowed on this server.")
-    key = (url, show_bots, host)
+    key = (url, show_bots, host, custom)
     if key in _cache:
         return _cache[key]
     try:
-        if host is None:
-            card = make_card(url, show_bots=show_bots)
-        else:
-            card = make_card(url, show_bots=show_bots, host=host)
+        kwargs: dict = {} if host is None else {"host": host}
+        if custom is not None:
+            kwargs["flavor"] = custom
+        card = make_card(url, show_bots=show_bots, **kwargs)
     except BadPRUrl as exc:
         raise HTTPException(400, "That doesn't look like a GitHub pull request URL.") from exc
     except httpx.HTTPStatusError as exc:
@@ -240,7 +252,8 @@ def _get_card(url: str, show_bots: bool = False, host: str | None = None) -> Car
         message = "PR not found." if status == 404 else f"GitHub returned {status}."
         raise HTTPException(502, message) from exc
     _cache[key] = card
-    _record(url, show_bots, card, host)
+    if custom is None:  # custom flavours don't create extra gallery entries
+        _record(url, show_bots, card, host)
     return card
 
 

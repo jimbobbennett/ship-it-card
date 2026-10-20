@@ -34,6 +34,12 @@ the CLI, or `show_bots=true` on the web app (`/card?url=...&show_bots=true` and
 `/card.png?url=...&show_bots=true`), to include the bots; they get their own distinct chip colour and a small `BOT` tag, so humans,
 AI agents and bots are easy to tell apart.
 
+### Custom flavour text
+
+Pass `--flavor "Ship happens"` on the CLI (PNG and `--json` output), or `flavor=Ship%20happens`
+on the web app (`/card?url=...&flavor=...` and `/card.png?url=...&flavor=...`), to replace the
+generated flavour line. Maximum 80 characters; longer text is rejected.
+
 ### GitHub Enterprise Server
 
 Pass `--host ghe.example.com` on the CLI, or `host=ghe.example.com` on the web app
