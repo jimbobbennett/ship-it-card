@@ -34,6 +34,10 @@ the CLI, or `show_bots=true` on the web app (`/card?url=...&show_bots=true` and
 `/card.png?url=...&show_bots=true`), to include the bots; they get their own distinct chip colour and a small `BOT` tag, so humans,
 AI agents and bots are easy to tell apart.
 
+When the PR author's GitHub `author_association` is `FIRST_TIME_CONTRIBUTOR` or `FIRST_TIMER`,
+their crew chip gets a small drawn 🌱 seedling. Only the PR author can be detected. In `--json`
+output every crew entry has a `first_timer` boolean.
+
 The `/card` page has a **Download PNG** button and a **Copy link** button (copies the shareable page URL; not shown for tokened cards).
 
 ### Card cache

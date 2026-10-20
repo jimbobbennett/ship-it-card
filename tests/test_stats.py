@@ -283,3 +283,40 @@ def test_breakdown_sums_to_total(lines, reviewers, commits, minutes):
 def test_card_stats_carries_breakdown(pr_data):
     s = build_stats(pr_data)
     assert s.score_breakdown.total == s.ship_score
+
+
+@pytest.mark.parametrize("assoc", ["FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER"])
+def test_first_timer_flags_only_pr_author(pr_data, assoc):
+    pr_data.pr["author_association"] = assoc
+    flags = {m.name: m.first_timer for m in find_crew(pr_data, show_bots=True)}
+    assert flags["octocat"] is True
+    assert [n for n, f in flags.items() if f] == ["octocat"]
+
+
+@pytest.mark.parametrize("assoc", ["CONTRIBUTOR", "MEMBER", "NONE", None])
+def test_other_associations_not_flagged(pr_data, assoc):
+    if assoc is not None:
+        pr_data.pr["author_association"] = assoc
+    assert not any(m.first_timer for m in find_crew(pr_data, show_bots=True))
+
+
+def test_first_timer_kept_through_dedup_and_agent_readd(pr_data):
+    pr_data.pr["author_association"] = "FIRST_TIMER"
+    pr_data.pr["user"] = {"login": "Claude"}
+    pr_data.commits.append({"author": {"login": "Claude"}, "commit": {"message": "x"}})
+    crew = find_crew(pr_data)
+    claude = [m for m in crew if m.name == "Claude"]
+    assert len(claude) == 1 and claude[0].kind == "agent" and claude[0].first_timer
+    assert not any(m.first_timer for m in crew if m.name != "Claude")
+
+
+def test_hidden_bot_author_flagged_but_excluded(pr_data):
+    pr_data.pr["author_association"] = "FIRST_TIMER"
+    pr_data.pr["user"] = {"login": "dependabot[bot]"}
+    assert "dependabot" not in [m.name for m in find_crew(pr_data)]
+    shown = [m for m in find_crew(pr_data, show_bots=True) if m.kind == "bot"]
+    assert shown and shown[0].first_timer
+
+
+def test_crew_member_positional_construction():
+    assert stats.CrewMember("a", "human").first_timer is False

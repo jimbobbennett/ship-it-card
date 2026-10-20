@@ -156,3 +156,27 @@ def test_long_flavor_fits_and_differs(pr_data):
     long_png = card_png(dataclasses.replace(stats, flavor="W" * 80), art)
     assert Image.open(io.BytesIO(long_png)).size == (W, H)
     assert long_png != card_png(stats, art)
+
+
+def test_first_timer_chip_renders_and_differs(pr_data):
+    import dataclasses
+
+    from PIL import ImageChops
+
+    stats = build_stats(pr_data)
+    art = procedural_art("fixed", "Rare")
+    plain = [CrewMember("ada", "human"), CrewMember("Claude", "agent")]
+    stats.crew = plain
+    base = _render(stats, art).convert("RGB")
+    flagged = dataclasses.replace(
+        stats, crew=[CrewMember("ada", "human", first_timer=True), plain[1]]
+    )
+    img = _render(flagged, art).convert("RGB")
+    assert img.size == (W, H)
+    assert ImageChops.difference(base, img).getbbox() is not None
+
+
+def test_many_crew_with_first_timer_renders(pr_data):
+    stats = build_stats(pr_data)
+    stats.crew = [CrewMember(f"member{i}", "human", first_timer=(i == 2)) for i in range(7)]
+    assert card_png(stats, procedural_art("fixed", "Rare"))

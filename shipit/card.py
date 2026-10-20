@@ -301,6 +301,17 @@ def chip_style(kind: str, accent) -> tuple[tuple, tuple, str | None]:
     return HUMAN, INK, None
 
 
+SEEDLING_WIDTH = 22
+
+
+def _seedling(draw: ImageDraw.ImageDraw, x: float, y: float, color) -> None:
+    """Draw a small vector seedling (the bundled fonts have no emoji glyph)."""
+    cx = x + SEEDLING_WIDTH / 2
+    draw.line((cx, y + 30, cx, y + 14), fill=color, width=3)
+    draw.polygon([(cx, y + 18), (x, y + 10), (x + 3, y + 1), (cx - 1, y + 6)], fill=color)
+    draw.polygon([(cx, y + 14), (x + 22, y + 8), (x + 19, y), (cx + 1, y + 4)], fill=color)
+
+
 def _crew(draw: ImageDraw.ImageDraw, stats: CardStats, accent) -> None:
     y = 1276
     x = PAD + 36
@@ -316,16 +327,21 @@ def _crew(draw: ImageDraw.ImageDraw, stats: CardStats, accent) -> None:
         tw = draw.textlength(label, font=chip_font)
         fill, ink, tag = chip_style(member.kind, accent)
         extra = TAG_WIDTHS[tag] + 10 if tag else 0
+        if member.first_timer:
+            extra += SEEDLING_WIDTH + 8
         width = tw + 36 + extra
         if x + width > right - 70:
             break
         draw.rounded_rectangle((x, y, x + width, y + 50), radius=25, fill=fill)
         draw.text((x + 18, y + 10), label, font=chip_font, fill=ink)
+        mx = x + 18 + tw + 8
         if tag:
-            tx = x + 18 + tw + 8
             tag_w = TAG_WIDTHS[tag]
-            draw.rounded_rectangle((tx, y + 14, tx + tag_w, y + 36), radius=6, fill=PANEL)
-            draw.text((tx + 5, y + 15), tag, font=tag_font, fill=fill)
+            draw.rounded_rectangle((mx, y + 14, mx + tag_w, y + 36), radius=6, fill=PANEL)
+            draw.text((mx + 5, y + 15), tag, font=tag_font, fill=fill)
+            mx += tag_w + 10
+        if member.first_timer:
+            _seedling(draw, mx, y + 10, ink)
         x += width + 12
         shown_count += 1
     hidden = len(stats.crew) - shown_count
