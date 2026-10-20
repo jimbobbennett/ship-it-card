@@ -110,13 +110,19 @@ def test_ship_score_is_bounded():
 
 
 def test_rarity_thresholds():
-    assert [rarity(s) for s in (1, 45, 70, 80, 99)] == [
-        "Common",
-        "Uncommon",
-        "Rare",
-        "Epic",
-        "Legendary",
+    cases = [
+        (1, "Common"),
+        (39, "Common"),
+        (40, "Uncommon"),
+        (71, "Uncommon"),
+        (72, "Rare"),
+        (74, "Rare"),
+        (75, "Epic"),
+        (87, "Epic"),
+        (88, "Legendary"),
+        (99, "Legendary"),
     ]
+    assert [rarity(s) for s, _ in cases] == [name for _, name in cases]
 
 
 def test_format_duration():
