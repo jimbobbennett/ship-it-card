@@ -42,8 +42,10 @@ Pass `--host ghe.example.com` on the CLI, or `host=ghe.example.com` on the web a
 hostname with an optional port. `GITHUB_TOKEN` is never sent to a custom host; set
 `GHE_TOKEN` to authenticate to it (otherwise requests are unauthenticated).
 
-The web app accepts any valid bare hostname (a malformed host gets a 400). Note that the
-server connects to the given host, so only expose a public instance if that is acceptable.
+The web app only accepts hosts listed in the `SHIPIT_ALLOWED_HOSTS` env var
+(comma-separated, e.g. `ghe.example.com,ghe2.example.com:8443`). If it is unset, every
+`host=` is rejected with a 400. This prevents SSRF and `GHE_TOKEN` leakage to arbitrary
+hosts. The CLI is unaffected.
 Ports must be 1 to 65535.
 
 The web app's home page shows the 20 most recent cards (in-memory, reset on restart).

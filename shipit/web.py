@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import os
 from collections import deque
 from urllib.parse import quote
 from xml.sax.saxutils import escape as xml_escape
@@ -179,12 +180,24 @@ def badge(url: str = Query(..., max_length=300)) -> Response:
     )
 
 
+def _allowed_hosts() -> set[str]:
+    """Hosts permitted via ?host=, from SHIPIT_ALLOWED_HOSTS (comma-separated).
+
+    Deny by default: with the variable unset, no custom host is accepted, so the web app
+    can't be used for SSRF or to leak GHE_TOKEN to an arbitrary host.
+    """
+    raw = os.environ.get("SHIPIT_ALLOWED_HOSTS", "")
+    return {h.strip().lower() for h in raw.split(",") if h.strip()}
+
+
 def _get_card(url: str, show_bots: bool = False, host: str | None = None) -> Card:
     if host is not None:
         try:
             host = validate_host(host)
         except BadPRUrl as exc:
             raise HTTPException(400, "That doesn't look like a valid GitHub host.") from exc
+        if host not in _allowed_hosts():
+            raise HTTPException(400, "That GitHub host is not allowed on this server.")
     key = (url, show_bots, host)
     if key in _cache:
         return _cache[key]

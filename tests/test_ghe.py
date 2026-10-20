@@ -179,6 +179,9 @@ def _host_client(monkeypatch, pr_data):
         return card
 
     monkeypatch.setattr(web, "make_card", fake)
+    monkeypatch.setenv(
+        "SHIPIT_ALLOWED_HOSTS", "ghe.example.com,ghe.example.com:8443,other.example.com"
+    )
     web._cache.clear()
     return TestClient(web.app), calls
 
@@ -205,8 +208,9 @@ def test_bad_host(monkeypatch, pr_data):
     assert calls == []
 
 
-def test_host_works_without_any_configuration(monkeypatch, pr_data):
+def test_host_rejected_without_allowlist(monkeypatch, pr_data):
     client, calls = _host_client(monkeypatch, pr_data)
+    monkeypatch.delenv("SHIPIT_ALLOWED_HOSTS")
     params = {"url": "https://ghe.example.com/o/r/pull/1", "host": "ghe.example.com"}
-    assert client.get("/card.png", params=params).status_code == 200
-    assert calls == ["ghe.example.com"]
+    assert client.get("/card.png", params=params).status_code == 400
+    assert calls == []
