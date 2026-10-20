@@ -47,6 +47,14 @@ Pass `--flavor "Ship happens"` on the CLI (PNG and `--json` output), or `flavor=
 on the web app (`/card?url=...&flavor=...` and `/card.png?url=...&flavor=...`), to replace the
 generated flavour line. Maximum 80 characters; longer text is rejected.
 
+### Art styles
+
+Pass `--style pixel|anime|watercolour|painterly` on the CLI, or `style=pixel` on the web app
+(`/card?url=...&style=...` and `/card.png?url=...&style=...`), to change the style of the Gemini
+art. With no style the card keeps the current look. Any other value is rejected (web: HTTP 400;
+CLI: usage error). Styled cards are cached separately, and the procedural fallback art (no
+`GEMINI_API_KEY`, `--no-gemini`, or a Gemini failure) is not restyled.
+
 ### Private repos (your own token)
 
 Pass `--token TOKEN` on the CLI (PNG and `--json`), or fill in the optional password field on the

@@ -16,6 +16,7 @@ import httpx
 from fastapi import FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, Response
 
+from .art import STYLES
 from .card import RARITY_COLOURS
 from .core import FLAVOR_MAX, Card, make_card, normalize_flavor
 from .github import BadPRUrl, clean_token, validate_host
@@ -109,8 +110,9 @@ def card_page(
     show_bots: bool = False,
     host: str | None = Query(None, max_length=300),
     flavor: str | None = Query(None, max_length=FLAVOR_MAX),
+    style: str | None = Query(None, max_length=20),
 ) -> str:
-    return _render_card(request, url, show_bots, host, flavor)
+    return _render_card(request, url, show_bots, host, flavor, style=_check_style(style))
 
 
 @app.post("/card", response_class=HTMLResponse)
@@ -143,10 +145,11 @@ def _render_card(
     host: str | None,
     flavor: str | None,
     token: str | None = None,
+    style: str | None = None,
 ) -> str:
     safe = html.escape(url, quote=True)
     try:
-        card = _get_card(url, show_bots, host, flavor, token)
+        card = _get_card(url, show_bots, host, flavor, token, style)
     except HTTPException as exc:
         return _page(safe, f'<div class="err">{html.escape(exc.detail)}</div>')
     alt = html.escape(f"Ship-it card for {card.stats.slug}", quote=True)
@@ -162,6 +165,8 @@ def _render_card(
         extra += f"&host={quote(host, safe='')}"
     if custom is not None:
         extra += f"&flavor={quote(custom, safe='')}"
+    if style is not None:
+        extra += f"&style={style}"  # only a whitelisted value ever gets here
     query = f"url={quote(url, safe='')}{extra}"
     img = f'<img src="/card.png?{query}" alt="{alt}">'
     base = str(request.base_url)
@@ -212,14 +217,16 @@ def card_image(
     show_bots: bool = False,
     host: str | None = Query(None, max_length=300),
     flavor: str | None = Query(None, max_length=FLAVOR_MAX),
+    style: str | None = Query(None, max_length=20),
 ) -> Response:
+    style = _check_style(style)
     host = _check_host(host)
     custom = _check_flavor(flavor)
-    path = _card_cache_path(url, show_bots, host, custom)
+    path = _card_cache_path(url, show_bots, host, custom, style)
     cached = _read_cached_png(path)
     if cached is not None:
         return Response(cached, media_type="image/png")
-    card = _get_card(url, show_bots, host, custom)
+    card = _get_card(url, show_bots, host, custom, style=style)
     _write_cached_png(path, card.png)
     return Response(card.png, media_type="image/png")
 
@@ -234,10 +241,16 @@ def _card_cache_dir() -> Path:
 
 
 def _card_cache_path(
-    url: str, show_bots: bool, host: str | None, flavor: str | None = None
+    url: str,
+    show_bots: bool,
+    host: str | None,
+    flavor: str | None = None,
+    style: str | None = None,
 ) -> Path:
     # Only the hex digest ever reaches the filesystem, never the raw url or host.
     key = (url, show_bots, host) if flavor is None else (url, show_bots, host, flavor)
+    if style is not None:
+        key = (url, show_bots, host, flavor, style)
     raw = repr(key).encode()
     return _card_cache_dir() / f"{hashlib.sha256(raw).hexdigest()}.png"
 
@@ -330,6 +343,12 @@ def _check_flavor(flavor: str | None) -> str | None:
         raise HTTPException(400, str(exc)) from exc
 
 
+def _check_style(style: str | None) -> str | None:
+    if style is not None and style not in STYLES:
+        raise HTTPException(400, f"style must be one of: {', '.join(STYLES)}")
+    return style
+
+
 def _check_host(host: str | None) -> str | None:
     if host is not None:
         try:
@@ -347,10 +366,14 @@ def _get_card(
     host: str | None = None,
     flavor: str | None = None,
     token: str | None = None,
+    style: str | None = None,
 ) -> Card:
+    style = _check_style(style)
     host = _check_host(host)
     custom = _check_flavor(flavor)
     key = (url, show_bots, host, custom)
+    if style is not None:
+        key += (style,)
     if token is None and key in _cache:
         return _cache[key]
     try:
@@ -359,6 +382,8 @@ def _get_card(
             kwargs["flavor"] = custom
         if token is not None:
             kwargs["token"] = token
+        if style is not None:
+            kwargs["style"] = style
         card = make_card(url, show_bots=show_bots, **kwargs)
     except BadPRUrl as exc:
         raise HTTPException(400, "That doesn't look like a GitHub pull request URL.") from exc
@@ -369,7 +394,7 @@ def _get_card(
     if token is not None:  # private card: never cached, never in the gallery
         return card
     _cache[key] = card
-    if custom is None:  # custom flavours don't create extra gallery entries
+    if custom is None and style is None:  # custom flavours/styles add no gallery entries
         _record(url, show_bots, card, host)
     return card
 
