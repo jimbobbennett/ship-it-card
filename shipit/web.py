@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import html
 import os
+import tempfile
 from collections import deque
+from pathlib import Path
 from urllib.parse import quote
 from xml.sax.saxutils import escape as xml_escape
 
@@ -162,8 +165,57 @@ def card_image(
     host: str | None = Query(None, max_length=300),
     flavor: str | None = Query(None, max_length=FLAVOR_MAX),
 ) -> Response:
-    card = _get_card(url, show_bots, host, flavor)
+    host = _check_host(host)
+    custom = _check_flavor(flavor)
+    path = _card_cache_path(url, show_bots, host, custom)
+    cached = _read_cached_png(path)
+    if cached is not None:
+        return Response(cached, media_type="image/png")
+    card = _get_card(url, show_bots, host, custom)
+    _write_cached_png(path, card.png)
     return Response(card.png, media_type="image/png")
+
+
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+DEFAULT_CARD_CACHE_DIR = ".cache/cards"
+
+
+def _card_cache_dir() -> Path:
+    """Read at request time so tests and operators can change it without a reimport."""
+    return Path(os.environ.get("SHIPIT_CARD_CACHE_DIR") or DEFAULT_CARD_CACHE_DIR)
+
+
+def _card_cache_path(
+    url: str, show_bots: bool, host: str | None, flavor: str | None = None
+) -> Path:
+    # Only the hex digest ever reaches the filesystem, never the raw url or host.
+    key = (url, show_bots, host) if flavor is None else (url, show_bots, host, flavor)
+    raw = repr(key).encode()
+    return _card_cache_dir() / f"{hashlib.sha256(raw).hexdigest()}.png"
+
+
+def _read_cached_png(path: Path) -> bytes | None:
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    return data if data.startswith(PNG_MAGIC) else None
+
+
+def _write_cached_png(path: Path, png: bytes) -> None:
+    tmp_name = None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+        with os.fdopen(fd, "wb") as f:
+            f.write(png)
+        os.replace(tmp_name, path)
+    except OSError:
+        if tmp_name is not None:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
 
 
 BADGE_MAX_TITLE = 40
@@ -223,13 +275,14 @@ def _allowed_hosts() -> set[str]:
     return {h.strip().lower() for h in raw.split(",") if h.strip()}
 
 
-def _get_card(
-    url: str, show_bots: bool = False, host: str | None = None, flavor: str | None = None
-) -> Card:
+def _check_flavor(flavor: str | None) -> str | None:
     try:
-        custom = normalize_flavor(flavor)
+        return normalize_flavor(flavor)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+def _check_host(host: str | None) -> str | None:
     if host is not None:
         try:
             host = validate_host(host)
@@ -237,6 +290,14 @@ def _get_card(
             raise HTTPException(400, "That doesn't look like a valid GitHub host.") from exc
         if host not in _allowed_hosts():
             raise HTTPException(400, "That GitHub host is not allowed on this server.")
+    return host
+
+
+def _get_card(
+    url: str, show_bots: bool = False, host: str | None = None, flavor: str | None = None
+) -> Card:
+    host = _check_host(host)
+    custom = _check_flavor(flavor)
     key = (url, show_bots, host, custom)
     if key in _cache:
         return _cache[key]
