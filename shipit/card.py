@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import colorsys
 import io
+import math
+import random
 from functools import lru_cache
 from pathlib import Path
 
@@ -53,10 +56,8 @@ def font(name: str, size: int, weight: str | None = None) -> ImageFont.FreeTypeF
 def render_card(stats: CardStats, art: Image.Image) -> Image.Image:
     accent = RARITY_COLOURS.get(stats.rarity, RARITY_COLOURS["Common"])
     card = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    _frame(card, stats, accent)
     draw = ImageDraw.Draw(card)
-
-    draw.rounded_rectangle((0, 0, W - 1, H - 1), radius=56, fill=accent)
-    draw.rounded_rectangle((PAD, PAD, W - PAD, H - PAD), radius=34, fill=PANEL)
 
     _header(draw, stats, accent)
     _art(card, draw, art, accent)
@@ -65,6 +66,113 @@ def render_card(stats: CardStats, art: Image.Image) -> Image.Image:
     _crew(draw, stats, accent)
     _footer(draw, stats)
     return card
+
+
+def _rarity_level(stats: CardStats) -> int:
+    return list(RARITY_COLOURS).index(stats.rarity) if stats.rarity in RARITY_COLOURS else 0
+
+
+def _mix(a, b, t: float) -> tuple[int, int, int]:
+    return tuple(round(a[i] + (b[i] - a[i]) * t) for i in range(3))
+
+
+def _rounded_mask(box, radius: int) -> Image.Image:
+    mask = Image.new("L", (W, H), 0)
+    ImageDraw.Draw(mask).rounded_rectangle(box, radius=radius, fill=255)
+    return mask
+
+
+def _frame(card: Image.Image, stats: CardStats, accent) -> None:
+    """Draw the decorated border and panel; all of it sits behind the card content."""
+    level = _rarity_level(stats)
+    rng = random.Random(f"{stats.repo}#{stats.number}")
+    panel_box = (PAD, PAD, W - PAD, H - PAD)
+
+    # Border: diagonal sheen bands derived from the accent colour.
+    dark, light = _mix(accent, (0, 0, 0), 0.45), _mix(accent, (255, 255, 255), 0.55)
+    border = Image.new("RGB", (W, H), accent)
+    bd = ImageDraw.Draw(border)
+    period = 90 + 30 * (4 - level)
+    for d in range(0, W + H, 3):
+        t = abs(((d % period) / period) * 2 - 1)
+        colour = _mix(dark, light, t)
+        if level >= 3:  # holo hue drift for Epic / Legendary
+            hue, sat, val = colorsys.rgb_to_hsv(*(c / 255 for c in colour))
+            hue = (hue + 0.12 * (d / (W + H))) % 1.0
+            colour = tuple(round(c * 255) for c in colorsys.hsv_to_rgb(hue, sat, val))
+        bd.line((d, 0, d - H, H), fill=colour, width=4)
+    card.paste(border, (0, 0), _rounded_mask((0, 0, W - 1, H - 1), 56))
+
+    # Panel: dark base with a faint diagonal pattern.
+    panel = Image.new("RGB", (W, H), PANEL)
+    pd = ImageDraw.Draw(panel)
+    grid = _mix(PANEL, accent, 0.07)
+    for d in range(0, W + H, 28):
+        pd.line((d, 0, d - H, H), fill=grid, width=2)
+    card.paste(panel, (0, 0), _rounded_mask(panel_box, 34))
+
+    # Glossy shine band, wider and brighter for rarer cards.
+    shine = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    band = 40 + 30 * level
+    start = rng.randint(300, 700)
+    ImageDraw.Draw(shine).polygon(
+        [(start, 0), (start + band, 0), (start + band - H // 2, H), (start - H // 2, H)],
+        fill=(255, 255, 255, 10 + 5 * level),
+    )
+    clip = _rounded_mask(panel_box, 34)
+    shine.putalpha(Image.composite(shine.getchannel("A"), Image.new("L", (W, H), 0), clip))
+    card.alpha_composite(shine)
+
+    # Sparkles along the frame and panel gutters; more of them for rarer cards.
+    sparkles = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    spd = ImageDraw.Draw(sparkles)
+    for _ in range((0, 4, 8, 16, 28)[level]):
+        side = rng.randrange(4)
+        along = rng.randint(70, (W if side < 2 else H) - 70)
+        edge = rng.randint(10, PAD + 20)
+        if side == 0:
+            cx, cy = along, edge
+        elif side == 1:
+            cx, cy = along, H - edge
+        elif side == 2:
+            cx, cy = edge, along
+        else:
+            cx, cy = W - edge, along
+        _sparkle(spd, cx, cy, rng.randint(6, 10 + 3 * level), level)
+    card.alpha_composite(sparkles)
+
+
+def _sparkle(draw: ImageDraw.ImageDraw, cx: int, cy: int, r: int, level: int) -> None:
+    k = max(2, r // 4)
+    points = [
+        (cx, cy - r),
+        (cx + k, cy - k),
+        (cx + r, cy),
+        (cx + k, cy + k),
+        (cx, cy + r),
+        (cx - k, cy + k),
+        (cx - r, cy),
+        (cx - k, cy - k),
+    ]
+    draw.polygon(points, fill=(255, 255, 255, 235))
+    if level >= 3:  # extra diagonal glints on Epic / Legendary
+        d = r // 2 + 1
+        draw.line((cx - d, cy - d, cx + d, cy + d), fill=(255, 255, 255, 150), width=2)
+        draw.line((cx - d, cy + d, cx + d, cy - d), fill=(255, 255, 255, 150), width=2)
+
+
+def _header_stars(draw: ImageDraw.ImageDraw, stats: CardStats, accent) -> None:
+    """Rarity stars drawn as polygons, right-aligned under the score."""
+    count = RARITY_STARS.get(stats.rarity, 1)
+    right = W - PAD - 36
+    for i in range(count):
+        cx, cy = right - 14 - (count - 1 - i) * 34, 192
+        pts = []
+        for j in range(10):
+            ang = -math.pi / 2 + j * math.pi / 5
+            rad = 14 if j % 2 == 0 else 6
+            pts.append((cx + rad * math.cos(ang), cy + rad * math.sin(ang)))
+        draw.polygon(pts, fill=accent)
 
 
 def card_png(stats: CardStats, art: Image.Image) -> bytes:
@@ -90,7 +198,18 @@ def _header(draw: ImageDraw.ImageDraw, stats: CardStats, accent) -> None:
         y += title_font.size + 6
 
     sub = f"{stats.repo}  #{stats.number}"
-    draw.text((PAD + 36, 174), sub, font=font("body", 30, "Medium"), fill=MUTED)
+    sub_font = font("body", 30, "Medium")
+    stars_left = right - 28 - (RARITY_STARS.get(stats.rarity, 1) - 1) * 34 - 14
+    sub_space = stars_left - 16 - (PAD + 36)
+    if draw.textlength(sub, font=sub_font) > sub_space:
+        # Keep the repo text clear of the star row by ellipsizing the repo name.
+        suffix = f"...  #{stats.number}"
+        repo = stats.repo
+        while repo and draw.textlength(repo + suffix, font=sub_font) > sub_space:
+            repo = repo[:-1]
+        sub = repo + suffix
+    draw.text((PAD + 36, 174), sub, font=sub_font, fill=MUTED)
+    _header_stars(draw, stats, accent)
 
 
 def _fit_title(draw, title: str, width: float):

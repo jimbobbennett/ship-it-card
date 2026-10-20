@@ -65,6 +65,89 @@ def test_art_prompt_sanitises_title(pr_data):
     assert "no text" in prompt.lower()
 
 
+def _render(stats, art=None):
+    from shipit.card import render_card
+
+    return render_card(stats, art or procedural_art("fixed", "Rare"))
+
+
+def test_every_rarity_renders_at_size(pr_data):
+    stats = build_stats(pr_data)
+    for rarity in RARITY_COLOURS:
+        stats.rarity = rarity
+        image = _render(stats)
+        assert image.size == (W, H)
+        assert image.mode == "RGBA"
+
+
+def test_render_is_deterministic(pr_data):
+    stats = build_stats(pr_data)
+    art = procedural_art("fixed", "Rare")
+    assert card_png(stats, art) == card_png(stats, art)
+
+
+def test_border_is_not_flat(pr_data):
+    stats = build_stats(pr_data)
+    for rarity in RARITY_COLOURS:
+        stats.rarity = rarity
+        image = _render(stats).convert("RGB")
+        assert len({image.getpixel((x, 12)) for x in range(80, W - 80)}) > 1
+
+
+def test_legendary_differs_from_common_beyond_accent(pr_data):
+    from PIL import ImageChops
+
+    stats = build_stats(pr_data)
+    stats.rarity = "Common"
+    common = _render(stats)
+    stats.rarity = "Legendary"
+    legendary = _render(stats)
+    diff = ImageChops.difference(common.convert("RGB"), legendary.convert("RGB"))
+    assert diff.getbbox() is not None
+
+    # Near-white sparkle pixels (not accent-coloured) in the outer gutter: Legendary
+    # draws many more than Common.
+    def bright(img):
+        px = img.convert("RGB")
+        return sum(
+            1
+            for y in range(0, H, 2)
+            for x in list(range(0, 50)) + list(range(W - 50, W))
+            if min(px.getpixel((x, y))) > 240
+        )
+
+    assert bright(legendary) > bright(common) + 20
+
+
+def test_long_repo_name_clear_of_stars(pr_data, monkeypatch):
+    import random
+
+    # Pin the decoration seed so only the repo text differs between renders.
+    art = procedural_art("fixed", "Rare")
+    real_random = random.Random
+    monkeypatch.setattr("shipit.card.random.Random", lambda _seed: real_random(0))
+    stats = build_stats(pr_data)
+    stats.rarity = "Legendary"
+    short = _render(stats, art).convert("RGB")
+    stats.repo = "some-organisation/" + "very-long-repository-name-" * 6
+    long = _render(stats, art).convert("RGB")
+    # The star row must render identically: long repo text may not draw over it.
+    right = W - 36 - 36
+    stars = (right - 5 * 34 - 4, 170, right, 215)
+    assert short.crop(stars).tobytes() == long.crop(stars).tobytes()
+
+
+def test_art_region_unchanged_by_rarity(pr_data):
+    stats = build_stats(pr_data)
+    art = procedural_art("fixed", "Rare")
+    box = (80, 250, W - 80, 920)
+    stats.rarity = "Common"
+    a = _render(stats, art).crop(box)
+    stats.rarity = "Legendary"
+    b = _render(stats, art).crop(box)
+    assert a.tobytes() == b.tobytes()
+
+
 def test_long_flavor_fits_and_differs(pr_data):
     import dataclasses
 
