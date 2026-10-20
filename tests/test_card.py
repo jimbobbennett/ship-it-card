@@ -63,3 +63,13 @@ def test_art_prompt_sanitises_title(pr_data):
     prompt = art_prompt(build_stats(pr_data))
     assert "<script>" not in prompt
     assert "no text" in prompt.lower()
+
+
+def test_long_flavor_fits_and_differs(pr_data):
+    import dataclasses
+
+    stats = build_stats(pr_data)
+    art = procedural_art(stats.slug, stats.rarity)
+    long_png = card_png(dataclasses.replace(stats, flavor="W" * 80), art)
+    assert Image.open(io.BytesIO(long_png)).size == (W, H)
+    assert long_png != card_png(stats, art)
