@@ -3,7 +3,7 @@ import re
 
 import pytest
 
-from shipit.art import BODY_LIMIT, STYLES, art_prompt
+from shipit.art import BODY_LIMIT, LANGUAGE_MOTIFS, STYLES, TYPE_SCENES, art_prompt
 from shipit.stats import build_stats
 
 
@@ -32,9 +32,26 @@ def test_styles_keys():
 def test_default_prompt_unchanged(pr_data):
     stats = build_stats(pr_data)
     assert art_prompt(stats, None) == art_prompt(stats)
-    assert "Painterly digital fantasy art, dramatic lighting, rich saturated colours, " in (
-        art_prompt(stats)
+    # Exact pre-styles prompt template (single space after "Painterly"), so the
+    # Gemini cache hash for unstyled cards stays unchanged.
+    scene = TYPE_SCENES.get(stats.card_type, TYPE_SCENES["Feature"])
+    motif = LANGUAGE_MOTIFS.get(stats.language, "")
+    team = (
+        " A small friendly robot works alongside the human, as an equal partner."
+        if stats.has_agents
+        else ""
     )
+    expected = (
+        f"Full-bleed fantasy illustration: {scene} {motif}. "
+        f'The scene is loosely inspired by a software change called "{stats.title}".{team} '
+        f"{stats.rarity} card energy. Vibrant, optimistic, celebratory mood. Painterly "
+        "digital fantasy art, dramatic lighting, rich saturated colours, centred subject, "
+        "4:3 landscape composition that fills the entire canvas edge to edge. No border, "
+        "no frame, no card outline, no panels. Absolutely no text, letters, numbers, logos "
+        "or watermarks anywhere in the image."
+    )
+    assert art_prompt(stats) == expected
+    assert "Painterly  digital" not in art_prompt(stats)
 
 
 @pytest.mark.parametrize("style", list(STYLES))
