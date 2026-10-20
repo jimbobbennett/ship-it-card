@@ -103,12 +103,14 @@ DOCS_FLAVOR = [
 
 TINY_MAX_LINES = 10  # total lines changed at or below this is "tiny"
 HUGE_MIN_LINES = 1000  # total lines changed at or above this is "huge"
+FIRST_TIME_ASSOCIATIONS = {"FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER"}
 
 
 @dataclass
 class CrewMember:
     name: str
     kind: str  # "human", "agent" or "bot"
+    first_timer: bool = False
 
 
 @dataclass
@@ -240,6 +242,9 @@ def find_crew(data: PRData, show_bots: bool = False) -> list[CrewMember]:
                 add(agent, "agent")
             else:
                 add(name, "human")
+    if pr_author and data.pr.get("author_association") in FIRST_TIME_ASSOCIATIONS:
+        # Only the PR author is flagged; done last so dedup/agent re-adds can't drop it.
+        crew[_classify_login(pr_author)[0].lower()].first_timer = True
     return [m for m in crew.values() if show_bots or m.kind != "bot"]
 
 

@@ -131,7 +131,7 @@ def test_json_output(json_env, capsys):
     assert data["ship_score"] == 10
     assert data["minutes_to_merge"] is None
     assert data["abilities"] == [{"name": "Speed", "value": "fast"}]
-    assert data["crew"] == [{"name": "alice", "kind": "human"}]
+    assert data["crew"] == [{"name": "alice", "kind": "human", "first_timer": False}]
     assert not list(tmp_path.iterdir())
 
 
