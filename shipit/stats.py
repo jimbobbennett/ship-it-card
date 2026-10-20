@@ -154,6 +154,7 @@ class CardStats:
     flavor: str = ""
     year: int = 0
     score_breakdown: ScoreBreakdown | None = None
+    pr_body: str = ""
 
     @property
     def has_agents(self) -> bool:
@@ -190,6 +191,7 @@ def build_stats(data: PRData, show_bots: bool = False) -> CardStats:
         author=(pr.get("user") or {}).get("login", "unknown"),
         language=repo.get("language") or "Code",
         description=repo.get("description") or "",
+        pr_body=pr.get("body") or "",
         card_type=type_,
         merged=merged_at is not None,
         additions=additions,
