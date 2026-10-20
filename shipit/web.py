@@ -5,9 +5,12 @@ from __future__ import annotations
 import base64
 import hashlib
 import html
+import math
 import os
 import re
 import tempfile
+import threading
+import time
 from collections import deque
 from pathlib import Path
 from urllib.parse import quote, urlencode
@@ -15,7 +18,7 @@ from xml.sax.saxutils import escape as xml_escape
 
 import httpx
 from fastapi import FastAPI, Form, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 
 from .art import STYLES, StyledArtUnavailable
 from .card import RARITY_COLOURS
@@ -28,6 +31,122 @@ _cache: dict[tuple[str, bool, str | None, str | None], Card] = {}
 RECENT_LIMIT = 20
 # Newest last; one entry per (url, show_bots, host). Metadata only, shared by all visitors.
 _recent: deque[dict] = deque(maxlen=RECENT_LIMIT)
+
+
+DEFAULT_RATE_LIMIT = 30
+DEFAULT_RATE_WINDOW = 3600
+_RATE_MAX_IPS = 10_000  # hard cap on tracked IPs so the table can't grow without limit
+_RATE_SWEEP_EVERY = 60  # seconds between full sweeps for expired entries
+
+
+def _env_int(name: str, default: int, minimum: int) -> int:
+    try:
+        value = int(os.environ.get(name, ""))
+    except ValueError:
+        return default
+    return value if value >= minimum else default
+
+
+def _rate_limit() -> int:
+    """Cards per window per IP; 0 disables. Read at request time."""
+    return _env_int("SHIPIT_RATE_LIMIT", DEFAULT_RATE_LIMIT, 0)
+
+
+def _rate_window() -> int:
+    return _env_int("SHIPIT_RATE_WINDOW", DEFAULT_RATE_WINDOW, 1)
+
+
+def _now() -> float:
+    return time.monotonic()
+
+
+class RateLimited(HTTPException):
+    def __init__(self, retry_after: int) -> None:
+        minutes = max(1, math.ceil(retry_after / 60))
+        unit = "minute" if minutes == 1 else "minutes"
+        super().__init__(
+            429,
+            f"You've made too many cards. Please try again in {minutes} {unit}.",
+            headers={"Retry-After": str(retry_after), "Cache-Control": "private, no-store"},
+        )
+
+
+class _RateLimiter:
+    """In-memory sliding window of card generations per client IP."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._hits: dict[str, deque[float]] = {}
+        self._last_sweep = 0.0
+
+    def reset(self) -> None:
+        with self._lock:
+            self._hits.clear()
+            self._last_sweep = 0.0
+
+    def _prune(self, ip: str, cutoff: float) -> deque[float] | None:
+        hits = self._hits.get(ip)
+        if hits is None:
+            return None
+        while hits and hits[0] <= cutoff:
+            hits.popleft()
+        if not hits:
+            del self._hits[ip]
+            return None
+        return hits
+
+    def charge(self, ip: str, limit: int, window: int) -> float | None:
+        """Record a hit and return its timestamp, or raise RateLimited when over the limit."""
+        if limit <= 0:
+            return None
+        now = _now()
+        with self._lock:
+            if now - self._last_sweep >= _RATE_SWEEP_EVERY or len(self._hits) > _RATE_MAX_IPS:
+                self._last_sweep = now
+                for key in list(self._hits):
+                    self._prune(key, now - window)
+                while len(self._hits) > _RATE_MAX_IPS:
+                    del self._hits[next(iter(self._hits))]
+            hits = self._prune(ip, now - window)
+            if hits is not None and len(hits) >= limit:
+                # Rejections are not recorded, so they never extend the window.
+                raise RateLimited(max(1, math.ceil(hits[0] + window - now)))
+            self._hits.setdefault(ip, deque()).append(now)
+            return now
+
+    def refund(self, ip: str, stamp: float | None) -> None:
+        if stamp is None:
+            return
+        with self._lock:
+            hits = self._hits.get(ip)
+            if hits is not None and stamp in hits:
+                hits.remove(stamp)
+                if not hits:
+                    del self._hits[ip]
+
+
+_limiter = _RateLimiter()
+
+
+def _client_ip(request: Request) -> str:
+    """The client address. X-Forwarded-For is honoured only with SHIPIT_TRUSTED_PROXY_HOPS=N."""
+    direct = request.client.host if request.client else "unknown"
+    hops = _env_int("SHIPIT_TRUSTED_PROXY_HOPS", 0, 0)
+    if hops < 1:
+        return direct
+    parts = [p.strip() for p in request.headers.get("x-forwarded-for", "").split(",")]
+    if len(parts) < hops or not parts[-hops]:
+        return direct
+    return parts[-hops][:100]
+
+
+@app.exception_handler(RateLimited)
+def _rate_limited(request: Request, exc: RateLimited) -> Response:
+    headers = dict(exc.headers or {})
+    if request.url.path == "/card":
+        body = f'<div class="err">{html.escape(exc.detail)}</div>'
+        return HTMLResponse(_page("", body), 429, headers)
+    return PlainTextResponse(exc.detail, 429, headers)
 
 
 PAGE = """<!doctype html>
@@ -199,7 +318,9 @@ def _render_card(
 ) -> str:
     safe = html.escape(url, quote=True)
     try:
-        card = _get_card(url, show_bots, host, flavor, token, style)
+        card = _get_card(url, show_bots, host, flavor, token, style, request)
+    except RateLimited:
+        raise
     except HTTPException as exc:
         return _page(safe, f'<div class="err">{html.escape(exc.detail)}</div>')
     alt = html.escape(f"Ship-it card for {card.stats.slug}", quote=True)
@@ -269,6 +390,7 @@ def _breakdown_html(card: Card) -> str:
 
 @app.get("/card.png")
 def card_image(
+    request: Request,
     url: str = Query(..., max_length=300),
     show_bots: bool = False,
     host: str | None = Query(None, max_length=300),
@@ -282,7 +404,7 @@ def card_image(
     cached = _read_cached_png(path)
     if cached is not None:
         return Response(cached, media_type="image/png")
-    card = _get_card(url, show_bots, host, custom, style=style)
+    card = _get_card(url, show_bots, host, custom, style=style, request=request)
     _write_cached_png(path, card.png)
     return Response(card.png, media_type="image/png")
 
@@ -372,8 +494,8 @@ def _badge_svg(repo: str, title: str, rarity: str, score: int) -> str:
 
 
 @app.get("/badge.svg")
-def badge(url: str = Query(..., max_length=300)) -> Response:
-    stats = _get_card(url).stats
+def badge(request: Request, url: str = Query(..., max_length=300)) -> Response:
+    stats = _get_card(url, request=request).stats
     svg = _badge_svg(stats.repo, stats.title, stats.rarity, stats.ship_score)
     return Response(
         svg,
@@ -423,6 +545,7 @@ def _get_card(
     flavor: str | None = None,
     token: str | None = None,
     style: str | None = None,
+    request: Request | None = None,
 ) -> Card:
     style = _check_style(style)
     host = _check_host(host)
@@ -432,6 +555,10 @@ def _get_card(
         key += (style,)
     if token is None and key in _cache:
         return _cache[key]
+    ip = _client_ip(request) if request is not None else None
+    stamp = None
+    if ip is not None:
+        stamp = _limiter.charge(ip, _rate_limit(), _rate_window())
     try:
         kwargs: dict = {} if host is None else {"host": host}
         if custom is not None:
@@ -442,6 +569,8 @@ def _get_card(
             kwargs["style"] = style
         card = make_card(url, show_bots=show_bots, **kwargs)
     except BadPRUrl as exc:
+        if ip is not None:
+            _limiter.refund(ip, stamp)  # invalid input doesn't use quota
         raise HTTPException(400, "That doesn't look like a GitHub pull request URL.") from exc
     except httpx.HTTPStatusError as exc:
         status = exc.response.status_code
