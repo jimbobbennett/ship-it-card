@@ -1,5 +1,5 @@
-"""CLI: python -m shipit <pr-url> [-o card.png] [--no-gemini] [--show-bots] [--host HOST] [--json]
-[--version]"""
+"""CLI: python -m shipit <pr-url> [-o card.png] [--no-gemini] [--show-bots] [--host HOST]
+[--flavor TEXT (max 80 chars)] [--json] [--version]"""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
-from .core import make_card, make_stats
+from .core import FLAVOR_MAX, make_card, make_stats, normalize_flavor
 from .github import BadPRUrl, validate_host
 
 
@@ -28,6 +28,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-gemini", action="store_true", help="use procedural art")
     parser.add_argument("--show-bots", action="store_true", help="include CI bots in the crew")
     parser.add_argument("--host", help="GitHub Enterprise hostname, e.g. ghe.example.com")
+    parser.add_argument("--flavor", help=f"custom flavour text (max {FLAVOR_MAX} characters)")
     parser.add_argument(
         "--json", action="store_true", help="print card stats as JSON instead of rendering a PNG"
     )
@@ -35,6 +36,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     kwargs = {}
+    try:
+        flavor = normalize_flavor(args.flavor)
+    except ValueError:
+        parser.error(f"--flavor must be at most {FLAVOR_MAX} characters")
+    if flavor is not None:
+        kwargs["flavor"] = flavor
     if args.json:
         try:
             if args.host is not None:
