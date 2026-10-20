@@ -60,7 +60,7 @@ CARD_TYPES = {
     "security": "Shield",
 }
 
-RARITIES = [(40, "Common"), (60, "Uncommon"), (75, "Rare"), (88, "Epic"), (100, "Legendary")]
+RARITIES = [(40, "Common"), (72, "Uncommon"), (75, "Rare"), (88, "Epic"), (100, "Legendary")]
 
 FLAVOR = [
     "Merged, tagged and out the door.",
