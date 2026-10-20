@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 import httpx
 
 API = "https://api.github.com"
+PER_PAGE = 100
+MAX_PAGES = 30  # hard bound so a misbehaving server cannot loop forever
 
 _PR_PATH = (
     r"/(?P<owner>[A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))/"
@@ -89,12 +91,23 @@ def fetch_pr(ref: PRRef, client: httpx.Client | None = None, host: str | None = 
         base = f"/repos/{ref.owner}/{ref.repo}"
         pr = _get(client, f"{base}/pulls/{ref.number}")
         repo = _get(client, base)
-        commits = _get(client, f"{base}/pulls/{ref.number}/commits", params={"per_page": 100})
-        reviews = _get(client, f"{base}/pulls/{ref.number}/reviews", params={"per_page": 100})
+        commits = _get_all(client, f"{base}/pulls/{ref.number}/commits")
+        reviews = _get_all(client, f"{base}/pulls/{ref.number}/reviews")
         return PRData(ref=ref, pr=pr, repo=repo, commits=commits, reviews=reviews)
     finally:
         if own_client:
             client.close()
+
+
+def _get_all(client: httpx.Client, path: str) -> list:
+    """Fetch every page of a list endpoint, stopping on a short or empty page."""
+    items: list = []
+    for page in range(1, MAX_PAGES + 1):
+        batch = _get(client, path, params={"per_page": PER_PAGE, "page": page})
+        items.extend(batch)
+        if len(batch) < PER_PAGE:
+            break
+    return items
 
 
 def _get(client: httpx.Client, path: str, params: dict | None = None):
