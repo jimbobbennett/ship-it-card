@@ -1,4 +1,5 @@
-"""CLI: python -m shipit <pr-url> [-o card.png] [--no-gemini] [--show-bots] [--version]"""
+"""CLI: python -m shipit <pr-url> [-o card.png] [--no-gemini] [--show-bots] [--host HOST]
+[--version]"""
 
 from __future__ import annotations
 
@@ -8,7 +9,7 @@ import sys
 from pathlib import Path
 
 from .core import make_card
-from .github import BadPRUrl
+from .github import BadPRUrl, validate_host
 
 
 def _version() -> str:
@@ -24,11 +25,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("-o", "--out", type=Path, help="output PNG (default: <repo>-<n>.png)")
     parser.add_argument("--no-gemini", action="store_true", help="use procedural art")
     parser.add_argument("--show-bots", action="store_true", help="include CI bots in the crew")
+    parser.add_argument("--host", help="GitHub Enterprise hostname, e.g. ghe.example.com")
     parser.add_argument("--version", action="version", version=f"shipit {_version()}")
     args = parser.parse_args(argv)
 
+    kwargs = {}
     try:
-        card = make_card(args.url, use_gemini=not args.no_gemini, show_bots=args.show_bots)
+        if args.host is not None:
+            kwargs["host"] = validate_host(args.host)
+        card = make_card(
+            args.url, use_gemini=not args.no_gemini, show_bots=args.show_bots, **kwargs
+        )
     except BadPRUrl as exc:
         parser.error(str(exc))
 

@@ -10,10 +10,10 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, Response
 
 from .core import Card, make_card
-from .github import BadPRUrl
+from .github import BadPRUrl, validate_host
 
 app = FastAPI(title="ship-it-card")
-_cache: dict[tuple[str, bool], Card] = {}
+_cache: dict[tuple[str, bool, str | None], Card] = {}
 
 PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -50,30 +50,48 @@ def index() -> str:
 
 
 @app.get("/card", response_class=HTMLResponse)
-def card_page(url: str = Query(..., max_length=300), show_bots: bool = False) -> str:
+def card_page(
+    url: str = Query(..., max_length=300),
+    show_bots: bool = False,
+    host: str | None = Query(None, max_length=300),
+) -> str:
     safe = html.escape(url, quote=True)
     try:
-        card = _get_card(url, show_bots)
+        card = _get_card(url, show_bots, host)
     except HTTPException as exc:
         return PAGE.format(value=safe, body=f'<div class="err">{html.escape(exc.detail)}</div>')
     alt = html.escape(f"Ship-it card for {card.stats.slug}", quote=True)
     extra = "&show_bots=true" if show_bots else ""
+    if host is not None:
+        extra += f"&host={quote(host, safe='')}"
     img = f'<img src="/card.png?url={quote(url, safe="")}{extra}" alt="{alt}">'
     return PAGE.format(value=safe, body=img)
 
 
 @app.get("/card.png")
-def card_image(url: str = Query(..., max_length=300), show_bots: bool = False) -> Response:
-    card = _get_card(url, show_bots)
+def card_image(
+    url: str = Query(..., max_length=300),
+    show_bots: bool = False,
+    host: str | None = Query(None, max_length=300),
+) -> Response:
+    card = _get_card(url, show_bots, host)
     return Response(card.png, media_type="image/png")
 
 
-def _get_card(url: str, show_bots: bool = False) -> Card:
-    key = (url, show_bots)
+def _get_card(url: str, show_bots: bool = False, host: str | None = None) -> Card:
+    if host is not None:
+        try:
+            host = validate_host(host)
+        except BadPRUrl as exc:
+            raise HTTPException(400, "That doesn't look like a valid GitHub host.") from exc
+    key = (url, show_bots, host)
     if key in _cache:
         return _cache[key]
     try:
-        card = make_card(url, show_bots=show_bots)
+        if host is None:
+            card = make_card(url, show_bots=show_bots)
+        else:
+            card = make_card(url, show_bots=show_bots, host=host)
     except BadPRUrl as exc:
         raise HTTPException(400, "That doesn't look like a GitHub pull request URL.") from exc
     except httpx.HTTPStatusError as exc:

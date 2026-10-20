@@ -32,6 +32,14 @@ the crew by default; coding agents (Claude, Copilot, ...) always stay. Pass `--s
 the CLI, or `show_bots=true` on the web app (`/card?url=...&show_bots=true` and
 `/card.png?url=...&show_bots=true`), to include the bots.
 
+### GitHub Enterprise Server
+
+Pass `--host ghe.example.com` on the CLI, or `host=ghe.example.com` on the web app
+(`/card?url=...&host=...` and `/card.png?url=...&host=...`), to fetch a PR from
+`https://<host>/api/v3`. The PR URL must be on that same host, and the host must be a bare
+hostname with an optional port. `GITHUB_TOKEN` is never sent to a custom host; set
+`GHE_TOKEN` to authenticate to it (otherwise requests are unauthenticated).
+
 Without `GEMINI_API_KEY` you still get a card, with procedural artwork instead.
 Generated art is cached in `.cache/art/`, keyed by model and prompt.
 
