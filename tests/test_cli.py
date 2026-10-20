@@ -161,3 +161,47 @@ def test_json_in_help(capsys):
     with pytest.raises(SystemExit):
         main(["--help"])
     assert "--json" in capsys.readouterr().out
+
+
+def test_normalize_flavor():
+    from shipit.core import normalize_flavor
+
+    assert normalize_flavor(None) is None
+    assert normalize_flavor("  \n\t ") is None
+    assert normalize_flavor("  hi\nthere\x00 ") == "hi there"
+    assert normalize_flavor("x" * 80) == "x" * 80
+    with pytest.raises(ValueError):
+        normalize_flavor("x" * 81)
+
+
+def test_flavor_json(json_env, capsys):
+    assert main([URL, "--json", "--flavor", "Ship happens"]) == 0
+    assert json.loads(capsys.readouterr().out)["flavor"] == "Ship happens"
+
+
+def test_flavor_png(monkeypatch, tmp_path):
+    from shipit import core
+
+    seen = {}
+    monkeypatch.setattr(core, "parse_pr_url", lambda url, host=None: url)
+    monkeypatch.setattr(core, "fetch_pr", lambda ref, host=None: ref)
+    monkeypatch.setattr(core, "build_stats", lambda pr, show_bots=False: _fake_stats())
+    monkeypatch.setattr(core, "get_art", lambda stats, use_gemini=True: (None, "procedural"))
+
+    def fake_png(stats, art):
+        seen["flavor"] = stats.flavor
+        return b"png"
+
+    monkeypatch.setattr(core, "card_png", fake_png)
+    out = tmp_path / "out.png"
+    assert main([URL, "--flavor", "Ship happens", "-o", str(out)]) == 0
+    assert seen["flavor"] == "Ship happens"
+    assert out.read_bytes() == b"png"
+
+
+def test_flavor_too_long(json_env, capsys, tmp_path):
+    with pytest.raises(SystemExit) as exc:
+        main([URL, "--flavor", "x" * 81, "-o", str(tmp_path / "o.png")])
+    assert exc.value.code != 0
+    assert "80" in capsys.readouterr().err
+    assert not (tmp_path / "o.png").exists()

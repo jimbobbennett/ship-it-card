@@ -279,6 +279,76 @@ def test_badge_errors():
     assert client.get("/badge.svg").status_code == 422
 
 
+def _flavor_env(monkeypatch, pr_data):
+    base = build_stats(pr_data)
+    calls = []
+
+    def fake(url, show_bots=False, flavor=None):
+        calls.append(flavor)
+        stats = base if flavor is None else dataclasses.replace(base, flavor=flavor)
+        return Card(stats, b"\x89PNG" + (flavor or "").encode(), "procedural")
+
+    monkeypatch.setattr(web, "make_card", fake)
+    _reset()
+    return TestClient(web.app), calls
+
+
+FLAVOR_URL = "https://github.com/o/r/pull/1"
+
+
+def test_flavor_png_passed_to_make_card(monkeypatch, pr_data):
+    client, calls = _flavor_env(monkeypatch, pr_data)
+    response = client.get("/card.png", params={"url": FLAVOR_URL, "flavor": "Hello"})
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/png"
+    assert calls == ["Hello"]
+
+
+def test_flavor_cache_keys_are_separate(monkeypatch, pr_data):
+    client, calls = _flavor_env(monkeypatch, pr_data)
+    a = client.get("/card.png", params={"url": FLAVOR_URL, "flavor": "A"}).content
+    b = client.get("/card.png", params={"url": FLAVOR_URL, "flavor": "B"}).content
+    plain = client.get("/card.png", params={"url": FLAVOR_URL}).content
+    empty = client.get("/card.png", params={"url": FLAVOR_URL, "flavor": "  "}).content
+    assert a.endswith(b"A") and b.endswith(b"B") and plain == b"\x89PNG"
+    assert empty == plain
+    assert client.get("/card.png", params={"url": FLAVOR_URL, "flavor": "A"}).content == a
+    assert calls == ["A", "B", None]
+
+
+def test_flavor_page_text_and_img_src(monkeypatch, pr_data):
+    client, _ = _flavor_env(monkeypatch, pr_data)
+    text = client.get("/card", params={"url": FLAVOR_URL, "flavor": "Hello world"}).text
+    assert ">Hello world<" in text
+    assert "&flavor=Hello%20world" in text
+    assert "flavor" not in client.get("/card", params={"url": FLAVOR_URL}).text
+
+
+def test_flavor_is_escaped(monkeypatch, pr_data):
+    client, _ = _flavor_env(monkeypatch, pr_data)
+    params = {"url": FLAVOR_URL, "flavor": "<script>alert(1)</script>"}
+    text = client.get("/card", params=params).text
+    assert "<script>" not in text
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in text
+    assert "&flavor=%3Cscript%3E" in text
+
+
+def test_flavor_length_limit(monkeypatch, pr_data):
+    client, _ = _flavor_env(monkeypatch, pr_data)
+    for path in ("/card", "/card.png"):
+        assert client.get(path, params={"url": FLAVOR_URL, "flavor": "x" * 81}).status_code == 422
+        assert client.get(path, params={"url": FLAVOR_URL, "flavor": "x" * 80}).status_code == 200
+
+
+def test_flavor_not_added_to_gallery(monkeypatch, pr_data):
+    client, _ = _flavor_env(monkeypatch, pr_data)
+    client.get("/card.png", params={"url": FLAVOR_URL, "flavor": "A"})
+    assert len(web._recent) == 0
+    client.get("/card.png", params={"url": FLAVOR_URL})
+    client.get("/card.png", params={"url": FLAVOR_URL, "flavor": "B"})
+    assert len(web._recent) == 1
+
+
 OG_URL = "https://github.com/o/r/pull/1"
 OG_Q = "url=https%3A%2F%2Fgithub.com%2Fo%2Fr%2Fpull%2F1"
 

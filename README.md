@@ -41,6 +41,12 @@ regenerate art. The directory is `SHIPIT_CARD_CACHE_DIR` (default `.cache/cards`
 named by a SHA-256 of the PR URL, `show_bots` and host. There is no expiry: delete the
 directory to refresh. `/card` and `/badge.svg` still use the in-memory cache only.
 
+### Custom flavour text
+
+Pass `--flavor "Ship happens"` on the CLI (PNG and `--json` output), or `flavor=Ship%20happens`
+on the web app (`/card?url=...&flavor=...` and `/card.png?url=...&flavor=...`), to replace the
+generated flavour line. Maximum 80 characters; longer text is rejected.
+
 ### GitHub Enterprise Server
 
 Pass `--host ghe.example.com` on the CLI, or `host=ghe.example.com` on the web app
