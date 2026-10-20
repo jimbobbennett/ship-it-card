@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import os
+from collections import deque
 from urllib.parse import quote
 from xml.sax.saxutils import escape as xml_escape
 
@@ -17,6 +18,9 @@ from .github import BadPRUrl, validate_host
 
 app = FastAPI(title="ship-it-card")
 _cache: dict[tuple[str, bool, str | None], Card] = {}
+RECENT_LIMIT = 20
+# Newest last; one entry per (url, show_bots, host). Metadata only, shared by all visitors.
+_recent: deque[dict] = deque(maxlen=RECENT_LIMIT)
 
 
 def allowed_hosts() -> set[str]:
@@ -32,15 +36,27 @@ PAGE = """<!doctype html>
 <style>
   body {{ margin: 0; min-height: 100vh; display: grid; place-items: center;
          background: #0b0c14; color: #f4f5fa; font: 18px/1.5 system-ui, sans-serif; }}
-  main {{ width: min(560px, 92vw); text-align: center; padding: 48px 0; }}
+  main {{ width: min(960px, 92vw); text-align: center; padding: 48px 0; }}
   h1 {{ font-size: 44px; margin: 0 0 4px; letter-spacing: -1px; }}
   p {{ color: #969cb4; margin: 0 0 28px; }}
-  form {{ display: flex; gap: 8px; }}
+  form {{ display: flex; gap: 8px; max-width: 560px; margin: 0 auto; }}
   input {{ flex: 1; padding: 14px 16px; border-radius: 12px; border: 1px solid #2a2e45;
            background: #11131f; color: inherit; font-size: 16px; }}
   button {{ padding: 14px 22px; border: 0; border-radius: 12px; background: #ffc440;
             font-weight: 700; font-size: 16px; cursor: pointer; }}
-  img {{ width: 100%; margin-top: 32px; border-radius: 28px; }}
+  table.score {{ width: 100%; margin-top: 24px; border-collapse: collapse; font-size: 15px;
+                text-align: left; }}
+  table.score caption {{ color: #969cb4; text-align: left; padding-bottom: 6px; }}
+  table.score th, table.score td {{ padding: 6px 8px; border-bottom: 1px solid #2a2e45; }}
+  table.score .pts {{ text-align: right; }}
+  main > img {{ display: block; width: 100%; max-width: 560px; margin: 32px auto 0;
+               border-radius: 28px; }}
+  .gallery {{ display: grid; gap: 20px; margin-top: 40px; text-align: left;
+              grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }}
+  .gallery a {{ color: inherit; text-decoration: none; }}
+  .gallery img {{ width: 100%; height: auto; display: block; border-radius: 14px; }}
+  .gallery .t {{ font-size: 15px; font-weight: 600; margin-top: 8px; overflow-wrap: anywhere; }}
+  .gallery .r {{ font-size: 13px; color: #969cb4; overflow-wrap: anywhere; }}
   .err {{ color: #ff8a8a; margin-top: 20px; }}
 </style></head>
 <body><main>
@@ -56,7 +72,26 @@ PAGE = """<!doctype html>
 
 @app.get("/", response_class=HTMLResponse)
 def index() -> str:
-    return PAGE.format(value="", body="")
+    return PAGE.format(value="", body=_gallery())
+
+
+def _gallery() -> str:
+    if not _recent:
+        return ""
+    tiles = []
+    for entry in reversed(_recent):
+        q = quote(entry["url"], safe="")
+        extra = "&show_bots=true" if entry["show_bots"] else ""
+        if entry.get("host") is not None:
+            extra += f"&host={quote(entry['host'], safe='')}"
+        title = html.escape(entry["title"], quote=True)
+        repo = html.escape(entry["repo"], quote=True)
+        tiles.append(
+            f'<a href="/card?url={q}{extra}">'
+            f'<img src="/card.png?url={q}{extra}" alt="{title}" loading="lazy">'
+            f'<div class="t">{title}</div><div class="r">{repo}</div></a>'
+        )
+    return '<div class="gallery">' + "".join(tiles) + "</div>"
 
 
 @app.get("/card", response_class=HTMLResponse)
@@ -75,7 +110,23 @@ def card_page(
     if host is not None:
         extra += f"&host={quote(host, safe='')}"
     img = f'<img src="/card.png?url={quote(url, safe="")}{extra}" alt="{alt}">'
-    return PAGE.format(value=safe, body=img)
+    return PAGE.format(value=safe, body=img + _breakdown_html(card))
+
+
+def _breakdown_html(card: Card) -> str:
+    breakdown = card.stats.score_breakdown
+    if breakdown is None:
+        return ""
+    rows = "".join(
+        f"<tr><td>{html.escape(line.label)}</td><td>{html.escape(line.value)}</td>"
+        f'<td class="pts">{line.points:+d}</td></tr>'
+        for line in breakdown.lines
+    )
+    return (
+        '<table class="score"><caption>How this score was calculated</caption>'
+        '<tr><th>Factor</th><th>Value</th><th class="pts">Points</th></tr>'
+        f'{rows}<tr><th colspan="2">Total</th><th class="pts">{breakdown.total}</th></tr></table>'
+    )
 
 
 @app.get("/card.png")
@@ -158,4 +209,20 @@ def _get_card(url: str, show_bots: bool = False, host: str | None = None) -> Car
         message = "PR not found." if status == 404 else f"GitHub returned {status}."
         raise HTTPException(502, message) from exc
     _cache[key] = card
+    _record(url, show_bots, card, host)
     return card
+
+
+def _record(url: str, show_bots: bool, card: Card, host: str | None = None) -> None:
+    for entry in list(_recent):
+        if (entry["url"], entry["show_bots"], entry.get("host")) == (url, show_bots, host):
+            _recent.remove(entry)
+    _recent.append(
+        {
+            "url": url,
+            "show_bots": show_bots,
+            "host": host,
+            "title": card.stats.title,
+            "repo": card.stats.slug.split("#", 1)[0],
+        }
+    )
