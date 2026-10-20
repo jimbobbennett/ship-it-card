@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 import httpx
@@ -114,14 +115,19 @@ def fetch_pr(
     try:
         base = f"/repos/{ref.owner}/{ref.repo}"
         h = extra_headers
-        pr = _get(client, f"{base}/pulls/{ref.number}", headers=h)
-        repo = _get(client, base, headers=h)
-        commits = _get(
-            client, f"{base}/pulls/{ref.number}/commits", params={"per_page": 100}, headers=h
-        )
-        reviews = _get(
-            client, f"{base}/pulls/{ref.number}/reviews", params={"per_page": 100}, headers=h
-        )
+        page = {"per_page": 100}
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            pr_f = pool.submit(_get, client, f"{base}/pulls/{ref.number}", headers=h)
+            repo_f = pool.submit(_get, client, base, headers=h)
+            commits_f = pool.submit(
+                _get, client, f"{base}/pulls/{ref.number}/commits", params=page, headers=h
+            )
+            reviews_f = pool.submit(
+                _get, client, f"{base}/pulls/{ref.number}/reviews", params=page, headers=h
+            )
+            # .result() re-raises the original exception; leaving the with-block joins threads.
+            pr, repo = pr_f.result(), repo_f.result()
+            commits, reviews = commits_f.result(), reviews_f.result()
         return PRData(ref=ref, pr=pr, repo=repo, commits=commits, reviews=reviews)
     finally:
         if own_client:

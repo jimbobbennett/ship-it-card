@@ -113,6 +113,126 @@ def test_fetch_pr_token_with_injected_client(monkeypatch):
         assert set(seen) == {"Bearer clienttok"}
 
 
+def _fetch_client(handler):
+    import httpx
+
+    return httpx.Client(base_url="https://api.github.com", transport=httpx.MockTransport(handler))
+
+
+def _ref():
+    from shipit.github import PRRef
+
+    return PRRef("octo", "widgets", 7)
+
+
+def test_fetch_pr_requests_are_concurrent():
+    import threading
+
+    import httpx
+
+    from shipit.github import fetch_pr
+
+    barrier = threading.Barrier(4, timeout=5)
+    seen = []
+
+    def handler(request):
+        barrier.wait()  # only passes if all 4 requests are in flight together
+        seen.append((request.url.path, request.url.query.decode()))
+        return httpx.Response(200, json={"path": request.url.path})
+
+    client = _fetch_client(handler)
+    data = fetch_pr(_ref(), client=client)
+    assert sorted(seen) == sorted(
+        [
+            ("/repos/octo/widgets/pulls/7", ""),
+            ("/repos/octo/widgets", ""),
+            ("/repos/octo/widgets/pulls/7/commits", "per_page=100"),
+            ("/repos/octo/widgets/pulls/7/reviews", "per_page=100"),
+        ]
+    )
+    assert data.pr == {"path": "/repos/octo/widgets/pulls/7"}
+    assert not client.is_closed
+
+
+def test_fetch_pr_maps_results_regardless_of_completion_order():
+    import threading
+    import time
+
+    import httpx
+
+    from shipit.github import fetch_pr
+
+    delays = {
+        "/repos/octo/widgets/pulls/7": 0.3,
+        "/repos/octo/widgets": 0.2,
+        "/repos/octo/widgets/pulls/7/commits": 0.1,
+        "/repos/octo/widgets/pulls/7/reviews": 0.0,
+    }
+    started = threading.Barrier(4, timeout=5)
+
+    def handler(request):
+        started.wait()
+        time.sleep(delays[request.url.path])
+        return httpx.Response(200, json={"p": request.url.path})
+
+    data = fetch_pr(_ref(), client=_fetch_client(handler))
+    assert data.pr == {"p": "/repos/octo/widgets/pulls/7"}
+    assert data.repo == {"p": "/repos/octo/widgets"}
+    assert data.commits == {"p": "/repos/octo/widgets/pulls/7/commits"}
+    assert data.reviews == {"p": "/repos/octo/widgets/pulls/7/reviews"}
+
+
+def test_fetch_pr_404_raises_http_status_error():
+    import httpx
+
+    from shipit.github import fetch_pr
+
+    def handler(request):
+        if request.url.path == "/repos/octo/widgets/pulls/7":
+            return httpx.Response(404, json={})
+        return httpx.Response(200, json={})
+
+    with pytest.raises(httpx.HTTPStatusError):
+        fetch_pr(_ref(), client=_fetch_client(handler))
+
+
+def test_fetch_pr_closes_own_client_on_success_and_failure(monkeypatch):
+    import httpx
+
+    from shipit import github
+
+    created = []
+    status = {"code": 200}
+
+    def handler(request):
+        return httpx.Response(status["code"], json={})
+
+    real = httpx.Client
+
+    def factory(**kw):
+        c = real(transport=httpx.MockTransport(handler), **kw)
+        created.append(c)
+        return c
+
+    monkeypatch.setattr(github.httpx, "Client", factory)
+    github.fetch_pr(_ref())
+    status["code"] = 500
+    with pytest.raises(httpx.HTTPStatusError):
+        github.fetch_pr(_ref())
+    assert len(created) == 2 and all(c.is_closed for c in created)
+
+
+def test_fetch_pr_invalid_host_raises_before_any_request(monkeypatch):
+    from shipit import github
+
+    def factory(**kw):
+        raise AssertionError("no client expected")
+
+    monkeypatch.setattr(github.httpx, "Client", factory)
+    with pytest.raises(BadPRUrl):
+        github.fetch_pr(_ref(), host="bad host/x")
+
+
 def test_clean_token():
     from shipit.github import clean_token
 
