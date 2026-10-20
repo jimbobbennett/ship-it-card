@@ -1,10 +1,12 @@
 import pytest
 
+from shipit import stats
 from shipit.stats import (
     build_stats,
     card_type,
     clean_title,
     find_crew,
+    flavor,
     format_duration,
     rarity,
     ship_score,
@@ -121,3 +123,50 @@ def test_format_duration():
     assert format_duration(5) == "5m"
     assert format_duration(150) == "2h 30m"
     assert format_duration(60 * 24 * 6) == "6 days"
+
+
+SLUGS = [f"owner/repo#{n}" for n in range(30)]
+
+
+@pytest.mark.parametrize(
+    "lines,type_,agents,pool",
+    [
+        (1, "Fix", False, stats.TINY_FLAVOR),
+        (stats.TINY_MAX_LINES, "Fix", False, stats.TINY_FLAVOR),
+        (stats.TINY_MAX_LINES + 1, "Fix", False, stats.FLAVOR),
+        (500, "Feature", False, stats.FLAVOR),
+        (stats.HUGE_MIN_LINES - 1, "Feature", False, stats.FLAVOR),
+        (stats.HUGE_MIN_LINES, "Feature", False, stats.HUGE_FLAVOR),
+        (3000, "Refactor", False, stats.HUGE_FLAVOR),
+        (500, "Docs", False, stats.DOCS_FLAVOR),
+        (500, "Feature", True, stats.TEAM_FLAVOR),
+        (500, "Docs", True, stats.DOCS_FLAVOR),
+        (1, "Fix", True, stats.TEAM_FLAVOR),
+        (3000, "Feature", True, stats.TEAM_FLAVOR),
+    ],
+)
+def test_flavor_pool_selection(lines, type_, agents, pool):
+    for slug in SLUGS:
+        assert flavor(slug, lines, type_, agents) in pool
+
+
+def test_flavor_pools_are_distinct_and_sized():
+    for pool in (stats.TINY_FLAVOR, stats.HUGE_FLAVOR, stats.DOCS_FLAVOR, stats.TEAM_FLAVOR):
+        assert len(pool) >= 3
+        assert not set(pool) & set(stats.FLAVOR)
+    assert not set(stats.TINY_FLAVOR) & set(stats.HUGE_FLAVOR)
+
+
+def test_flavor_is_deterministic():
+    for slug in SLUGS:
+        assert len({flavor(slug, 500, "Feature", False) for _ in range(5)}) == 1
+
+
+def test_build_stats_flavor_pools(pr_data):
+    pr_data.pr["additions"], pr_data.pr["deletions"] = 3, 2
+    pr_data.pr["title"] = "fix: typo"
+    assert build_stats(pr_data).flavor in stats.TEAM_FLAVOR  # fixture has an agent
+    pr_data.pr["title"] = "docs: typo"
+    first = build_stats(pr_data).flavor
+    assert first in stats.DOCS_FLAVOR
+    assert build_stats(pr_data).flavor == first
