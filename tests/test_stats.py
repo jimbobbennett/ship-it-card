@@ -170,3 +170,55 @@ def test_build_stats_flavor_pools(pr_data):
     first = build_stats(pr_data).flavor
     assert first in stats.DOCS_FLAVOR
     assert build_stats(pr_data).flavor == first
+
+
+def _trailer(name, email="x@example.com"):
+    return {"author": None, "commit": {"message": f"x\n\nCo-Authored-By: {name} <{email}>"}}
+
+
+def _kinds(pr_data, **kw):
+    return {m.name: m.kind for m in find_crew(pr_data, **kw)}
+
+
+@pytest.mark.parametrize(
+    "trailer,login,expected",
+    [
+        ("Windsurf", "windsurf[bot]", "Windsurf"),
+        ("Kiro", "kiro[bot]", "Kiro"),
+        ("OpenHands", "openhands-agent", "OpenHands"),
+        ("openhands", "all-hands-bot", "OpenHands"),
+        ("Factory Droid", "factory-droid[bot]", "Factory"),
+        ("droid", "droids[bot]", "Factory"),
+        ("Amazon Q", "amazon-q-developer[bot]", "Amazon Q"),
+        ("Amazon Q Developer", "amazon-q[bot]", "Amazon Q"),
+    ],
+)
+def test_new_agents_from_trailer_and_login(pr_data, trailer, login, expected):
+    pr_data.commits = [_trailer(trailer)]
+    pr_data.pr["user"] = {"login": "octocat"}
+    assert _kinds(pr_data)[expected] == "agent"
+    assert build_stats(pr_data).has_agents
+
+    pr_data.commits = [{"author": {"login": login}, "commit": {"message": "x"}}]
+    assert _kinds(pr_data)[expected] == "agent"  # show_bots False: agents stay
+    assert build_stats(pr_data).has_agents
+
+
+def test_agent_as_login_and_trailer_is_one_entry(pr_data):
+    pr_data.pr["user"] = {"login": "octocat"}
+    pr_data.commits = [
+        {"author": {"login": "factory-droid[bot]"}, "commit": {"message": "x"}},
+        _trailer("Factory Droid"),
+    ]
+    crew = [m for m in find_crew(pr_data) if m.name == "Factory"]
+    assert len(crew) == 1 and crew[0].kind == "agent"
+
+
+def test_lone_q_is_not_an_agent(pr_data):
+    pr_data.pr["user"] = {"login": "q-tester"}
+    pr_data.commits = [_trailer("Q Smith"), _trailer("Factory Worker")]
+    crew = _kinds(pr_data)
+    assert crew["q-tester"] == "human"
+    assert crew["Q Smith"] == "human"
+    assert crew["Factory Worker"] == "human"
+    assert not build_stats(pr_data).has_agents
