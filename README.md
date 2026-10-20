@@ -65,6 +65,7 @@ The web app's home page shows the 20 most recent cards (in-memory, reset on rest
 
 Without `GEMINI_API_KEY` you still get a card, with procedural artwork instead.
 Generated art is cached in `.cache/art/`, keyed by model and prompt.
+The PR description also influences the generated art; it is sanitised and truncated to 300 characters first.
 
 ## README badge
 

@@ -51,6 +51,7 @@ def main(argv: list[str] | None = None) -> int:
             parser.error(str(exc))
         data = asdict(stats)
         data.pop("score_breakdown", None)  # breakdown is shown on the web page only
+        data.pop("pr_body", None)  # art input only, not part of the JSON output
         print(json.dumps(data, indent=2))
         return 0
 
