@@ -28,6 +28,10 @@ PANEL_LIGHT = (32, 35, 54)
 INK = (244, 245, 250)
 MUTED = (150, 156, 180)
 HUMAN = (70, 76, 104)
+BOT = (224, 122, 72)
+
+# Tag text -> tag box width, for chips that carry a tag.
+TAG_WIDTHS = {"AI": 30, "BOT": 44}
 
 
 @lru_cache(maxsize=32)
@@ -169,6 +173,15 @@ def _abilities(draw: ImageDraw.ImageDraw, stats: CardStats, accent) -> None:
     draw.line((left, y, right, y), fill=PANEL_LIGHT, width=2)
 
 
+def chip_style(kind: str, accent) -> tuple[tuple, tuple, str | None]:
+    """Return (fill, ink, tag) for a crew chip of the given kind."""
+    if kind == "agent":
+        return accent, PANEL, "AI"
+    if kind == "bot":
+        return BOT, PANEL, "BOT"
+    return HUMAN, INK, None
+
+
 def _crew(draw: ImageDraw.ImageDraw, stats: CardStats, accent) -> None:
     y = 1276
     x = PAD + 36
@@ -182,18 +195,18 @@ def _crew(draw: ImageDraw.ImageDraw, stats: CardStats, accent) -> None:
     for member in shown:
         label = member.name if len(member.name) <= 14 else member.name[:13] + "."
         tw = draw.textlength(label, font=chip_font)
-        extra = 40 if member.kind == "agent" else 0
+        fill, ink, tag = chip_style(member.kind, accent)
+        extra = TAG_WIDTHS[tag] + 10 if tag else 0
         width = tw + 36 + extra
         if x + width > right - 70:
             break
-        fill = accent if member.kind == "agent" else HUMAN
-        ink = PANEL if member.kind == "agent" else INK
         draw.rounded_rectangle((x, y, x + width, y + 50), radius=25, fill=fill)
         draw.text((x + 18, y + 10), label, font=chip_font, fill=ink)
-        if member.kind == "agent":
+        if tag:
             tx = x + 18 + tw + 8
-            draw.rounded_rectangle((tx, y + 14, tx + 30, y + 36), radius=6, fill=PANEL)
-            draw.text((tx + 5, y + 15), "AI", font=tag_font, fill=accent)
+            tag_w = TAG_WIDTHS[tag]
+            draw.rounded_rectangle((tx, y + 14, tx + tag_w, y + 36), radius=6, fill=PANEL)
+            draw.text((tx + 5, y + 15), tag, font=tag_font, fill=fill)
         x += width + 12
         shown_count += 1
     hidden = len(stats.crew) - shown_count
