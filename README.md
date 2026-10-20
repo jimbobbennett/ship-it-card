@@ -34,7 +34,7 @@ the CLI, or `show_bots=true` on the web app (`/card?url=...&show_bots=true` and
 `/card.png?url=...&show_bots=true`), to include the bots; they get their own distinct chip colour and a small `BOT` tag, so humans,
 AI agents and bots are easy to tell apart.
 
-The `/card` page has a **Download PNG** button and a **Copy link** button (copies the shareable page URL; not shown for tokened cards).
+The `/card` page has a **Download PNG** button and a **Copy link** button (copies the shareable page URL), plus **Share on X** and **Share on LinkedIn** links (prefilled with your score and the page URL). Copy link and the share links are not shown for tokened cards.
 
 ### Card cache
 
