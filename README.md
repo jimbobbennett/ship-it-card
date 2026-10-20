@@ -34,6 +34,13 @@ the CLI, or `show_bots=true` on the web app (`/card?url=...&show_bots=true` and
 `/card.png?url=...&show_bots=true`), to include the bots; they get their own distinct chip colour and a small `BOT` tag, so humans,
 AI agents and bots are easy to tell apart.
 
+### Card cache
+
+`/card.png` keeps rendered PNGs on disk so a restart doesn't re-fetch from GitHub or
+regenerate art. The directory is `SHIPIT_CARD_CACHE_DIR` (default `.cache/cards`); files are
+named by a SHA-256 of the PR URL, `show_bots` and host. There is no expiry: delete the
+directory to refresh. `/card` and `/badge.svg` still use the in-memory cache only.
+
 ### GitHub Enterprise Server
 
 Pass `--host ghe.example.com` on the CLI, or `host=ghe.example.com` on the web app

@@ -3,6 +3,12 @@ import pytest
 from shipit.github import PRData, PRRef
 
 
+@pytest.fixture(autouse=True)
+def _card_cache_dir(tmp_path, monkeypatch):
+    """Keep /card.png disk caching out of the repo's .cache/cards during tests."""
+    monkeypatch.setenv("SHIPIT_CARD_CACHE_DIR", str(tmp_path / "card-cache"))
+
+
 @pytest.fixture
 def pr_data() -> PRData:
     return PRData(
