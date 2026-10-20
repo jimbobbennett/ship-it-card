@@ -198,7 +198,17 @@ def _header(draw: ImageDraw.ImageDraw, stats: CardStats, accent) -> None:
         y += title_font.size + 6
 
     sub = f"{stats.repo}  #{stats.number}"
-    draw.text((PAD + 36, 174), sub, font=font("body", 30, "Medium"), fill=MUTED)
+    sub_font = font("body", 30, "Medium")
+    stars_left = right - 28 - (RARITY_STARS.get(stats.rarity, 1) - 1) * 34 - 14
+    sub_space = stars_left - 16 - (PAD + 36)
+    if draw.textlength(sub, font=sub_font) > sub_space:
+        # Keep the repo text clear of the star row by ellipsizing the repo name.
+        suffix = f"...  #{stats.number}"
+        repo = stats.repo
+        while repo and draw.textlength(repo + suffix, font=sub_font) > sub_space:
+            repo = repo[:-1]
+        sub = repo + suffix
+    draw.text((PAD + 36, 174), sub, font=sub_font, fill=MUTED)
     _header_stars(draw, stats, accent)
 
 

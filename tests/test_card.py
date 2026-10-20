@@ -99,12 +99,42 @@ def test_legendary_differs_from_common_beyond_accent(pr_data):
 
     stats = build_stats(pr_data)
     stats.rarity = "Common"
-    common = _render(stats).convert("L")
+    common = _render(stats)
     stats.rarity = "Legendary"
-    legendary = _render(stats).convert("L")
-    region = (0, 0, W, 60)
-    diff = ImageChops.difference(common.crop(region), legendary.crop(region))
-    assert sum(diff.histogram()[41:]) > 200
+    legendary = _render(stats)
+    diff = ImageChops.difference(common.convert("RGB"), legendary.convert("RGB"))
+    assert diff.getbbox() is not None
+
+    # Near-white sparkle pixels (not accent-coloured) in the outer gutter: Legendary
+    # draws many more than Common.
+    def bright(img):
+        px = img.convert("RGB")
+        return sum(
+            1
+            for y in range(0, H, 2)
+            for x in list(range(0, 50)) + list(range(W - 50, W))
+            if min(px.getpixel((x, y))) > 240
+        )
+
+    assert bright(legendary) > bright(common) + 20
+
+
+def test_long_repo_name_clear_of_stars(pr_data, monkeypatch):
+    import random
+
+    # Pin the decoration seed so only the repo text differs between renders.
+    art = procedural_art("fixed", "Rare")
+    real_random = random.Random
+    monkeypatch.setattr("shipit.card.random.Random", lambda _seed: real_random(0))
+    stats = build_stats(pr_data)
+    stats.rarity = "Legendary"
+    short = _render(stats, art).convert("RGB")
+    stats.repo = "some-organisation/" + "very-long-repository-name-" * 6
+    long = _render(stats, art).convert("RGB")
+    # The star row must render identically: long repo text may not draw over it.
+    right = W - 36 - 36
+    stars = (right - 5 * 34 - 4, 170, right, 215)
+    assert short.crop(stars).tobytes() == long.crop(stars).tobytes()
 
 
 def test_art_region_unchanged_by_rarity(pr_data):
