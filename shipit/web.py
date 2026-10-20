@@ -9,7 +9,7 @@ from urllib.parse import quote
 from xml.sax.saxutils import escape as xml_escape
 
 import httpx
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, Response
 
 from .card import RARITY_COLOURS
@@ -27,7 +27,7 @@ PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ship-it-card</title>
-<style>
+{head}<style>
   body {{ margin: 0; min-height: 100vh; display: grid; place-items: center;
          background: #0b0c14; color: #f4f5fa; font: 18px/1.5 system-ui, sans-serif; }}
   main {{ width: min(960px, 92vw); text-align: center; padding: 48px 0; }}
@@ -66,7 +66,7 @@ PAGE = """<!doctype html>
 
 @app.get("/", response_class=HTMLResponse)
 def index() -> str:
-    return PAGE.format(value="", body=_gallery())
+    return PAGE.format(value="", body=_gallery(), head="")
 
 
 def _gallery() -> str:
@@ -90,6 +90,7 @@ def _gallery() -> str:
 
 @app.get("/card", response_class=HTMLResponse)
 def card_page(
+    request: Request,
     url: str = Query(..., max_length=300),
     show_bots: bool = False,
     host: str | None = Query(None, max_length=300),
@@ -99,7 +100,9 @@ def card_page(
     try:
         card = _get_card(url, show_bots, host, flavor)
     except HTTPException as exc:
-        return PAGE.format(value=safe, body=f'<div class="err">{html.escape(exc.detail)}</div>')
+        return PAGE.format(
+            value=safe, body=f'<div class="err">{html.escape(exc.detail)}</div>', head=""
+        )
     alt = html.escape(f"Ship-it card for {card.stats.slug}", quote=True)
     extra = "&show_bots=true" if show_bots else ""
     if host is not None:
@@ -107,9 +110,33 @@ def card_page(
     custom = normalize_flavor(flavor)
     if custom is not None:
         extra += f"&flavor={quote(custom, safe='')}"
-    img = f'<img src="/card.png?url={quote(url, safe="")}{extra}" alt="{alt}">'
+    query = f"url={quote(url, safe='')}{extra}"
+    img = f'<img src="/card.png?{query}" alt="{alt}">'
     text = f'<p class="flavor">{html.escape(custom)}</p>' if custom is not None else ""
-    return PAGE.format(value=safe, body=img + text + _breakdown_html(card))
+    base = str(request.base_url)
+    head = _og_tags(card, f"{base}card?{query}", f"{base}card.png?{query}")
+    return PAGE.format(value=safe, body=img + text + _breakdown_html(card), head=head)
+
+
+def _og_tags(card: Card, page_url: str, image_url: str) -> str:
+    stats = card.stats
+    title = f"{stats.title} · {stats.slug}"
+    description = f"{stats.rarity} · Ship score {stats.ship_score} — {stats.title}"
+    values = [
+        ("property", "og:title", title),
+        ("property", "og:description", description),
+        ("property", "og:image", image_url),
+        ("property", "og:type", "website"),
+        ("property", "og:url", page_url),
+        ("name", "twitter:card", "summary_large_image"),
+        ("name", "twitter:title", title),
+        ("name", "twitter:description", description),
+        ("name", "twitter:image", image_url),
+    ]
+    return "".join(
+        f'<meta {attr}="{key}" content="{html.escape(value, quote=True)}">\n'
+        for attr, key, value in values
+    )
 
 
 def _breakdown_html(card: Card) -> str:
