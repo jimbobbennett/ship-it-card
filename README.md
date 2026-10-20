@@ -32,6 +32,8 @@ the crew by default; coding agents (Claude, Copilot, ...) always stay. Pass `--s
 the CLI, or `show_bots=true` on the web app (`/card?url=...&show_bots=true` and
 `/card.png?url=...&show_bots=true`), to include the bots.
 
+The web app's home page shows the 20 most recent cards (in-memory, reset on restart).
+
 Without `GEMINI_API_KEY` you still get a card, with procedural artwork instead.
 Generated art is cached in `.cache/art/`, keyed by model and prompt.
 
