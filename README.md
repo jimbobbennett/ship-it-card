@@ -18,29 +18,31 @@ PRs and ship. Most of the code and most of the PRs were written by agents; see
 
 <table>
   <tr>
-    <td align="center">
+    <td align="center" width="50%">
       <a href="https://github.com/Arize-ai/phoenix/pull/16178"><img src="examples/arize-ai-phoenix-16178.png" alt="Ship-it card for Arize-ai/phoenix pull request 16178" width="100%"></a><br>
       <a href="https://github.com/Arize-ai/phoenix/pull/16178">Arize-ai/phoenix#16178</a>
     </td>
-    <td align="center">
+    <td align="center" width="50%">
       <a href="https://github.com/Arize-ai/phoenix/pull/17062"><img src="examples/arize-ai-phoenix-17062.png" alt="Ship-it card for Arize-ai/phoenix pull request 17062" width="100%"></a><br>
       <a href="https://github.com/Arize-ai/phoenix/pull/17062">Arize-ai/phoenix#17062</a>
     </td>
-    <td align="center">
+  </tr>
+  <tr>
+    <td align="center" width="50%">
       <a href="https://github.com/simonw/llm/pull/1741"><img src="examples/simonw-llm-1741.png" alt="Ship-it card for simonw/llm pull request 1741" width="100%"></a><br>
       <a href="https://github.com/simonw/llm/pull/1741">simonw/llm#1741</a>
     </td>
-  </tr>
-  <tr>
-    <td align="center">
+    <td align="center" width="50%">
       <a href="https://github.com/astral-sh/uv/pull/22742"><img src="examples/astral-sh-uv-22742.png" alt="Ship-it card for astral-sh/uv pull request 22742" width="100%"></a><br>
       <a href="https://github.com/astral-sh/uv/pull/22742">astral-sh/uv#22742</a>
     </td>
-    <td align="center">
+  </tr>
+  <tr>
+    <td align="center" width="50%">
       <a href="https://github.com/openai/codex/pull/55355"><img src="examples/openai-codex-55355.png" alt="Ship-it card for openai/codex pull request 55355" width="100%"></a><br>
       <a href="https://github.com/openai/codex/pull/55355">openai/codex#55355</a>
     </td>
-    <td align="center">
+    <td align="center" width="50%">
       <a href="https://github.com/jimbobbennett/blog-agent-bot/pull/1"><img src="examples/jimbobbennett-blog-agent-bot-1.png" alt="Ship-it card for jimbobbennett/blog-agent-bot pull request 1" width="100%"></a><br>
       <a href="https://github.com/jimbobbennett/blog-agent-bot/pull/1">jimbobbennett/blog-agent-bot#1</a>
     </td>
