@@ -3,6 +3,7 @@ name = "ship-it-card"
 version = "0.1.0"
 description = "Turn a merged GitHub PR into a collectible trading card, with art by Gemini."
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
